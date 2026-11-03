@@ -6,6 +6,7 @@ using Jellyfin.Plugin.SubscriptionManager.Models;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Model.Users;
 
 namespace Jellyfin.Plugin.SubscriptionManager.Services;
 
@@ -13,19 +14,24 @@ namespace Jellyfin.Plugin.SubscriptionManager.Services;
 /// Single-writer, prepaid monthly subscriptions. Money is always stored in integer cents.
 /// No collection or third-party payment processing is performed.
 /// </summary>
-public sealed class SubscriptionService
+public sealed partial class SubscriptionService
 {
     private readonly IUserManager _users;
     private readonly ILogger<SubscriptionService> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly SemaphoreSlim _seerrGate = new(1, 1);
+    private string _seerrStatusMessage = "Not synchronized yet";
+    public string SeerrStatusMessage => _seerrStatusMessage;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _path;
     private readonly SubscriptionState _state;
     private readonly JsonSerializerOptions _json = new() { WriteIndented = true };
 
-    public SubscriptionService(IApplicationPaths paths, IUserManager users, ILogger<SubscriptionService> logger)
+    public SubscriptionService(IApplicationPaths paths, IUserManager users, ILogger<SubscriptionService> logger, IHttpClientFactory httpClientFactory)
     {
         _users = users;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
         var dir = Path.Combine(paths.DataPath, "subscription-manager");
         Directory.CreateDirectory(dir);
         _path = Path.Combine(dir, "subscriptions.json");
@@ -34,6 +40,19 @@ public sealed class SubscriptionService
             ? JsonSerializer.Deserialize<SubscriptionState>(File.ReadAllText(_path), _json)
                 ?? throw new InvalidDataException("Subscription database is empty or invalid")
             : new SubscriptionState();
+        // Schema-compatible upgrade of 0.2.2 state: never reset plans or ledger.
+        _state.Seerr ??= new SeerrSettings();
+        foreach (var plan in _state.Plans)
+        {
+            plan.JellyfinPermissions ??= new PlanJellyfinPermissions();
+            plan.SeerrRequestAccess ??= "inherit";
+            plan.Description ??= string.Empty;
+        }
+        foreach (var member in _state.Memberships)
+        {
+            member.OriginalPermissions ??= new Dictionary<string, bool>();
+            member.OriginalSchedules ??= new List<ScheduleSnapshot>();
+        }
     }
 
     private DateOnly Today()
@@ -51,7 +70,14 @@ public sealed class SubscriptionService
         {
             var payload = JsonSerializer.Serialize(_state, _json);
             File.WriteAllText(tmp, payload);
-            if (File.Exists(_path)) File.Copy(_path, _path + ".bak", true);
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+                File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (File.Exists(_path))
+            {
+                File.Copy(_path, _path + ".bak", true);
+                if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+                    File.SetUnixFileMode(_path + ".bak", UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
             File.Move(tmp, _path, true);
         }
         finally { if (File.Exists(tmp)) File.Delete(tmp); }
@@ -142,43 +168,127 @@ public sealed class SubscriptionService
         Save(); // Persist the charge before changing Jellyfin access.
     }
 
+    // The plugin NEVER manages administrator, disabled, library, account hiding,
+    // parental, or deletion privileges through subscription plans.
+    private static readonly string[] ManagedPermissionNames =
+    {
+        nameof(PlanJellyfinPermissions.EnableMediaPlayback),
+        nameof(PlanJellyfinPermissions.EnableRemoteAccess),
+        nameof(PlanJellyfinPermissions.EnableContentDownloading),
+        nameof(PlanJellyfinPermissions.EnableLiveTvAccess),
+        nameof(PlanJellyfinPermissions.EnableVideoPlaybackTranscoding),
+        nameof(PlanJellyfinPermissions.EnableAudioPlaybackTranscoding),
+        nameof(PlanJellyfinPermissions.EnablePlaybackRemuxing)
+    };
+
+    private static bool? GetPlanSetting(PlanJellyfinPermissions? settings, string name) => name switch
+    {
+        nameof(PlanJellyfinPermissions.EnableMediaPlayback) => settings?.EnableMediaPlayback,
+        nameof(PlanJellyfinPermissions.EnableRemoteAccess) => settings?.EnableRemoteAccess,
+        nameof(PlanJellyfinPermissions.EnableContentDownloading) => settings?.EnableContentDownloading,
+        nameof(PlanJellyfinPermissions.EnableLiveTvAccess) => settings?.EnableLiveTvAccess,
+        nameof(PlanJellyfinPermissions.EnableVideoPlaybackTranscoding) => settings?.EnableVideoPlaybackTranscoding,
+        nameof(PlanJellyfinPermissions.EnableAudioPlaybackTranscoding) => settings?.EnableAudioPlaybackTranscoding,
+        nameof(PlanJellyfinPermissions.EnablePlaybackRemuxing) => settings?.EnablePlaybackRemuxing,
+        _ => null
+    };
+
+    private static bool ReadPolicySetting(UserPolicy policy, string name) => name switch
+    {
+        nameof(PlanJellyfinPermissions.EnableMediaPlayback) => policy.EnableMediaPlayback,
+        nameof(PlanJellyfinPermissions.EnableRemoteAccess) => policy.EnableRemoteAccess,
+        nameof(PlanJellyfinPermissions.EnableContentDownloading) => policy.EnableContentDownloading,
+        nameof(PlanJellyfinPermissions.EnableLiveTvAccess) => policy.EnableLiveTvAccess,
+        nameof(PlanJellyfinPermissions.EnableVideoPlaybackTranscoding) => policy.EnableVideoPlaybackTranscoding,
+        nameof(PlanJellyfinPermissions.EnableAudioPlaybackTranscoding) => policy.EnableAudioPlaybackTranscoding,
+        nameof(PlanJellyfinPermissions.EnablePlaybackRemuxing) => policy.EnablePlaybackRemuxing,
+        _ => throw new ArgumentOutOfRangeException(nameof(name))
+    };
+
+    private static void WritePolicySetting(UserPolicy policy, string name, bool value)
+    {
+        switch (name)
+        {
+            case nameof(PlanJellyfinPermissions.EnableMediaPlayback): policy.EnableMediaPlayback = value; break;
+            case nameof(PlanJellyfinPermissions.EnableRemoteAccess): policy.EnableRemoteAccess = value; break;
+            case nameof(PlanJellyfinPermissions.EnableContentDownloading): policy.EnableContentDownloading = value; break;
+            case nameof(PlanJellyfinPermissions.EnableLiveTvAccess): policy.EnableLiveTvAccess = value; break;
+            case nameof(PlanJellyfinPermissions.EnableVideoPlaybackTranscoding): policy.EnableVideoPlaybackTranscoding = value; break;
+            case nameof(PlanJellyfinPermissions.EnableAudioPlaybackTranscoding): policy.EnableAudioPlaybackTranscoding = value; break;
+            case nameof(PlanJellyfinPermissions.EnablePlaybackRemuxing): policy.EnablePlaybackRemuxing = value; break;
+            default: throw new ArgumentOutOfRangeException(nameof(name));
+        }
+    }
+
     private async Task ApplyAccessAsync(Membership member)
     {
         var user = _users.GetUserById(member.UserId);
-        if (user is null) return;
-        if (HasGrantedPermission(user, PermissionKind.IsAdministrator)) return;
-        if (HasGrantedPermission(user, PermissionKind.IsDisabled)) return; // Respect manual account disable.
-        AccessSchedule[] desired;
-        if (member.RestorePending)
-        {
-            if (!member.OriginalSchedulesCaptured) { member.RestorePending = false; Save(); return; }
+        if (user is null || HasGrantedPermission(user, PermissionKind.IsAdministrator) ||
+            HasGrantedPermission(user, PermissionKind.IsDisabled)) return;
+
+        var policy = _users.GetUserDto(user).Policy
+            ?? throw new InvalidOperationException("Jellyfin did not return a user policy");
+        var changed = false;
+        var snapshotChanged = false;
+        AccessSchedule[]? desired = null;
+        if (member.RestorePending && member.OriginalSchedulesCaptured)
             desired = Restore(member, user.Id);
-        }
         else if (member.Included)
-        {
-            desired = member.PaidThrough.HasValue && member.PaidThrough.Value >= Today()
+            desired = member.PaidThrough is { } paid && paid >= Today()
                 ? (member.OriginalSchedulesCaptured ? Restore(member, user.Id) : Array.Empty<AccessSchedule>())
                 : LockedSchedule(user.Id);
-        }
-        else return;
 
-        if (!SchedulesMatch(user.AccessSchedules, desired))
+        if (desired is not null && !SchedulesMatch(user.AccessSchedules, desired))
         {
-            // Get a complete fresh policy and change ONLY schedules. Every other
-            // Jellyfin permission/setting stays in the policy that was read.
-            var policy = _users.GetUserDto(user).Policy
-                ?? throw new InvalidOperationException("Jellyfin did not return a user policy");
             policy.AccessSchedules = desired;
-            await _users.UpdatePolicyAsync(user.Id, policy).ConfigureAwait(false);
-            _logger.LogInformation("Subscription access synchronized for {User}", user.Username);
+            changed = true;
         }
-        if (member.RestorePending)
+
+        var plan = member.Included ? _state.Plans.FirstOrDefault(x => x.Id == member.PlanId) : null;
+        var revert = new List<string>();
+        foreach (var key in ManagedPermissionNames)
+        {
+            bool? configured = GetPlanSetting(plan?.JellyfinPermissions, key);
+            bool current = ReadPolicySetting(policy, key);
+            if (configured.HasValue && member.Included)
+            {
+                if (!member.OriginalPermissions.ContainsKey(key))
+                {
+                    member.OriginalPermissions[key] = current;
+                    snapshotChanged = true;
+                }
+                if (current != configured.Value)
+                {
+                    WritePolicySetting(policy, key, configured.Value);
+                    changed = true;
+                }
+            }
+            else if (member.OriginalPermissions.TryGetValue(key, out var original))
+            {
+                if (current != original)
+                {
+                    WritePolicySetting(policy, key, original);
+                    changed = true;
+                }
+                revert.Add(key);
+            }
+        }
+        // Capture the original values BEFORE making a remote user-policy mutation.
+        if (snapshotChanged) Save();
+        if (changed)
+        {
+            await _users.UpdatePolicyAsync(user.Id, policy).ConfigureAwait(false);
+            _logger.LogInformation("Subscription permissions/access synchronized for {User}", user.Username);
+        }
+        foreach (var key in revert) member.OriginalPermissions.Remove(key);
+        var wasRestoring = member.RestorePending;
+        if (wasRestoring)
         {
             member.RestorePending = false;
             member.OriginalSchedulesCaptured = false;
             member.OriginalSchedules.Clear();
-            Save();
         }
+        if (revert.Count > 0 || wasRestoring) Save();
     }
 
     private async Task ReconcileLockedAsync(CancellationToken ct)
@@ -201,6 +311,7 @@ public sealed class SubscriptionService
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try { await ReconcileLockedAsync(ct).ConfigureAwait(false); }
         finally { _gate.Release(); }
+        await SyncSeerrAsync(ct).ConfigureAwait(false);
     }
 
     public async Task<object> OverviewAsync(CancellationToken ct = default)
@@ -232,7 +343,28 @@ public sealed class SubscriptionService
                 today,
                 timeZoneId = _state.TimeZoneId,
                 banner = _state.Banner,
-                plans = _state.Plans.OrderBy(p => p.Name).ToArray(),
+                seerr = new { enabled = _state.Seerr.Enabled, url = _state.Seerr.Url,
+                    hasApiKey = !string.IsNullOrWhiteSpace(_state.Seerr.ApiKey),
+                    autoImportUsers = _state.Seerr.AutoImportUsers,
+                    status = _seerrStatusMessage },
+                // Explicit camelCase DTOs: Jellyfin's MVC serializer can emit PascalCase
+                // for concrete C# plan objects; the admin web UI expects camelCase.
+                plans = _state.Plans.OrderBy(p => p.Name).Select(p => new
+                {
+                    id = p.Id, name = p.Name, description = p.Description,
+                    monthlyCents = p.MonthlyCents, enabled = p.Enabled,
+                    seerrRequestAccess = p.SeerrRequestAccess,
+                    jellyfinPermissions = new
+                    {
+                        enableMediaPlayback = p.JellyfinPermissions.EnableMediaPlayback,
+                        enableRemoteAccess = p.JellyfinPermissions.EnableRemoteAccess,
+                        enableContentDownloading = p.JellyfinPermissions.EnableContentDownloading,
+                        enableLiveTvAccess = p.JellyfinPermissions.EnableLiveTvAccess,
+                        enableVideoPlaybackTranscoding = p.JellyfinPermissions.EnableVideoPlaybackTranscoding,
+                        enableAudioPlaybackTranscoding = p.JellyfinPermissions.EnableAudioPlaybackTranscoding,
+                        enablePlaybackRemuxing = p.JellyfinPermissions.EnablePlaybackRemuxing
+                    }
+                }).ToArray(),
                 users,
                 ledger = _state.Ledger.OrderByDescending(t => t.CreatedUtc).ThenByDescending(t => t.Id).Take(1000).ToArray(),
                 totalCollectedCents = _state.Ledger.Where(t => t.Kind == "deposit").Sum(t => t.AmountCents),
@@ -251,6 +383,10 @@ public sealed class SubscriptionService
             throw new ArgumentException("Plan name must be 1–80 characters");
         if (req.MonthlyCents < 0 || req.MonthlyCents > 100_000_000)
             throw new ArgumentException("Monthly price must be between $0 and $1,000,000");
+        if ((req.Description ?? "").Length > 500)
+            throw new ArgumentException("Plan description must be 500 characters or fewer");
+        if ((req.SeerrRequestAccess ?? "inherit") is not ("inherit" or "allow" or "deny"))
+            throw new ArgumentException("Seerr request permission must be inherit, allow or deny");
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -261,6 +397,9 @@ public sealed class SubscriptionService
             if (!_state.Plans.Contains(plan)) _state.Plans.Add(plan);
             plan.Name = req.Name.Trim();
             plan.MonthlyCents = req.MonthlyCents;
+            plan.Description = req.Description?.Trim() ?? string.Empty;
+            plan.JellyfinPermissions = req.JellyfinPermissions ?? new PlanJellyfinPermissions();
+            plan.SeerrRequestAccess = req.SeerrRequestAccess ?? "inherit";
             plan.Enabled = req.Enabled; // Existing members keep their assigned plan even if hidden.
             Save();
             await ReconcileLockedAsync(CancellationToken.None).ConfigureAwait(false);

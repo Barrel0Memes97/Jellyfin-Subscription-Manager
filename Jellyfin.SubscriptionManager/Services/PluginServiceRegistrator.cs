@@ -9,6 +9,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)
     {
+        services.AddHttpClient("SubscriptionManager.Seerr", client => client.Timeout = TimeSpan.FromSeconds(12));
         services.AddSingleton<SubscriptionService>();
         services.AddTransient<IStartupFilter, BannerInjectionStartupFilter>();
         services.AddHostedService<SubscriptionWorker>();

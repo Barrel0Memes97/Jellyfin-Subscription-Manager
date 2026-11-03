@@ -33,7 +33,7 @@ def update_manifest(data, archive, version, repository, tag, timestamp=None):
             'category': 'General',
             'guid': PLUGIN_ID,
             'name': 'Subscription Manager',
-            'description': 'Manage prepaid Jellyfin subscription plans, user balances, account access and banners.',
+            'description': 'Manage Jellyfin subscription plans, payments, user permissions, Seerr requests, and banners.',
             'overview': 'Subscription Manager for Jellyfin',
             'owner': repository.split('/')[0],
             'versions': [],
@@ -43,7 +43,7 @@ def update_manifest(data, archive, version, repository, tag, timestamp=None):
     plugin['versions'] = [v for v in plugin['versions'] if not (
         v.get('version') == version and v.get('targetAbi') == TARGET_ABI)]
     plugin['versions'].insert(0, {
-        'changelog': f'Subscription Manager {version} for Jellyfin 12.4. Banner configuration and subscription management.',
+        'changelog': f'Subscription Manager {version} for Jellyfin 12.4. Plan permissions, account balances, Seerr integration and banners.',
         'targetAbi': TARGET_ABI,
         'version': version,
         'sourceUrl': source_url,

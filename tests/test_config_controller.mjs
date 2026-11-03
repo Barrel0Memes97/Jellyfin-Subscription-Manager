@@ -26,6 +26,7 @@ class Element {
   setAttribute(key, value) { this.attributes[key] = value; }
   appendChild() {}
   replaceChildren() {}
+  scrollIntoView() { this.scrolled = true; }
   reset() { this.value = ''; }
 }
 
@@ -46,20 +47,31 @@ function createPage() {
     return elements.get(id);
   };
   page.querySelector = get;
-  page.querySelectorAll = sel => sel === '.sm-tab' ? tabs : sel === '.sm-panel' ? panels : [];
+  const names = ['enableMediaPlayback','enableRemoteAccess','enableContentDownloading','enableLiveTvAccess',
+    'enableVideoPlaybackTranscoding','enableAudioPlaybackTranscoding','enablePlaybackRemuxing'];
+  const permissionControls = names.map(name => {
+    const el = new Element('perm-' + name); el.dataset.smPlanPermission = name; return el;
+  });
+  page.querySelectorAll = sel => sel === '.sm-tab' ? tabs : sel === '.sm-panel' ? panels :
+    sel === '[data-sm-plan-permission]' ? permissionControls : [];
   get('#sm-pay-user').value = '';
   get('#sm-ledger-user').value = '';
   get('#sm-b-preview-status').value = 'active';
-  return { page, tabs, panels, get };
+  return { page, tabs, panels, get, permissionControls };
 }
 
 globalThis.document = { createElement: (name) => new Element(name) };
 const id = 'c4c15b58-9cf0-4acc-99a3-f6bcb617b321';
+const planId = '30bd6817-e984-4bea-a1db-64d32db618c1';
 const state = {
   users: [{userId:id, name:'Demo', included:false, administrator:false, planId:null,
     balanceCents:0, paidThrough:null, status:'not managed', nextChargeOn:null}],
-  plans: [], ledger: [], activeCount:0, enrolledCount:0,
-  totalCollectedCents:0, totalBalanceCents:0, timeZoneId:'America/Los_Angeles', banner:null
+  // A real server may serialize concrete Plan objects with capitalized keys.
+  plans: [{Id:planId, Name:'Basic', MonthlyCents:450, Enabled:true, Description:'Standard access',
+    JellyfinPermissions:{EnableContentDownloading:false}, SeerrRequestAccess:'deny'}],
+  ledger: [], activeCount:0, enrolledCount:0,
+  totalCollectedCents:0, totalBalanceCents:0, timeZoneId:'America/Los_Angeles', banner:null,
+  seerr:{enabled:true, url:'http://seerr:5055', hasApiKey:true, autoImportUsers:false, status:'Connected'}
 };
 const calls = [];
 globalThis.ApiClient = {
@@ -71,7 +83,7 @@ globalThis.ApiClient = {
   }
 };
 
-const { page, tabs, panels, get } = createPage();
+const { page, tabs, panels, get, permissionControls } = createPage();
 new Controller(page);
 assert.ok(page.listeners.click?.length, 'click delegation not attached');
 assert.ok(page.listeners.viewshow?.length, 'viewshow not attached');
@@ -79,6 +91,13 @@ assert.ok(get('#sm-plan-form').listeners.submit?.length, 'form handler not attac
 await new Promise(resolve => setImmediate(resolve));
 assert.ok(calls.some(c => c.url.endsWith('/overview')), 'admin data never requested');
 assert.match(get('#sm-metrics').innerHTML, /Active subscriptions/);
+assert.match(get('#sm-plans').innerHTML, /Basic/);
+assert.match(get('#sm-plans').innerHTML, /\$4\.50/);
+assert.match(get('#sm-plans').innerHTML, /Yes/);
+assert.doesNotMatch(get('#sm-plans').innerHTML, /Hidden/);
+assert.match(get('#sm-users').innerHTML, /Basic/);
+assert.match(get('#sm-users').innerHTML, /\$4\.50/);
+assert.equal(get('#sm-seerr-key').value, '', 'API secret must never be inserted into UI');
 
 // All six tabs must respond without making a network request.
 for (let i = 0; i < tabs.length; i++) {
@@ -86,6 +105,22 @@ for (let i = 0; i < tabs.length; i++) {
   panels.forEach((panel, j) => assert.equal(panel.hidden, i !== j, `tab ${i} did not select the right panel`));
   assert.equal(tabs[i].attributes['aria-selected'], 'true');
 }
+
+// User configure action must make the details panel visible AND scroll into view.
+await page.fire('click', { target:{ closest:()=>({dataset:{ details:id }, id:'details'}) } });
+assert.equal(get('#sm-detail').hidden, false);
+assert.equal(get('#sm-detail').scrolled, true);
+assert.match(get('#sm-detail-name').textContent, /Demo/);
+
+// Opening plan config must populate all fields using normalized plan data.
+await page.fire('click', { target:{ closest:()=>({dataset:{ editPlan:planId }, id:'edit'}) } });
+assert.equal(get('#sm-plan-name').value, 'Basic');
+assert.equal(get('#sm-plan-price').value, '4.50');
+assert.equal(get('#sm-plan-enabled').checked, true);
+assert.equal(get('#sm-plan-desc').value, 'Standard access');
+assert.equal(get('#sm-plan-seerr').value, 'deny');
+assert.equal(permissionControls.find(e => e.dataset.smPlanPermission === 'enableContentDownloading').value, 'false');
+
 
 // Form submission must reach the authenticated API.
 get('#sm-plan-name').value = 'Standard';
@@ -95,6 +130,10 @@ await get('#sm-plan-form').fire('submit', { preventDefault() {} });
 const planSave = calls.find(c => c.url.endsWith('/plans'));
 assert.ok(planSave, 'Save plan never sent a request');
 assert.equal(JSON.parse(planSave.data).monthlyCents, 500);
+assert.equal(JSON.parse(planSave.data).seerrRequestAccess, 'deny');
+assert.equal(JSON.parse(planSave.data).description, 'Standard access');
+assert.equal(JSON.parse(planSave.data).jellyfinPermissions.enableContentDownloading, false);
+assert.equal(JSON.parse(planSave.data).jellyfinPermissions.enableRemoteAccess, null);
 
 // Enrolling a user must send the selected user ID and on/off value.
 get('#sm-plan-id').value = '';
@@ -103,6 +142,21 @@ await page.fire('change', { target: {dataset:{enroll:id}, checked:true} });
 const enrollment = calls.find(c => c.url.endsWith('/users/' + id));
 assert.ok(enrollment, 'Enroll toggle did not send a request');
 assert.equal(JSON.parse(enrollment.data).included, true);
+
+// Assigning a user must submit the real plan UUID rather than blank/undefined.
+await page.fire('change', { target: { dataset:{plan:id}, value:planId } });
+const assignment = calls.filter(c => c.url.endsWith('/users/' + id)).at(-1);
+assert.equal(JSON.parse(assignment.data).planId, planId);
+
+// Seerr settings must not leak/clear the existing API key on a blank edit.
+get('#sm-seerr-enabled').checked = true;
+get('#sm-seerr-url').value = 'http://seerr:5055';
+get('#sm-seerr-key').value = '';
+await get('#sm-seerr-form').fire('submit', { preventDefault() {} });
+const seerrSave = calls.find(c => c.url.endsWith('/seerr/settings'));
+assert.ok(seerrSave, 'Seerr settings did not save');
+assert.equal(JSON.parse(seerrSave.data).apiKey, '');
+assert.equal(JSON.parse(seerrSave.data).clearApiKey, false);
 
 // Banner form must post its configuration to the correct endpoint.
 await get('#sm-banner-form').fire('submit', { preventDefault() {} });

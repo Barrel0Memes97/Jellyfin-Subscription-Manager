@@ -22,7 +22,7 @@ public sealed class SubscriptionController : ControllerBase
     [HttpPost("plans")]
     public async Task<IActionResult> UpsertPlan([FromBody] PlanRequest req)
     {
-        try { await _service.UpsertPlanAsync(req); return Ok(new { success = true }); }
+        try { await _service.UpsertPlanAsync(req); await _service.SyncSeerrAsync(); return Ok(new { success = true }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
@@ -30,7 +30,7 @@ public sealed class SubscriptionController : ControllerBase
     [HttpPost("users/{userId:guid}")]
     public async Task<IActionResult> SetMember(Guid userId, [FromBody] MemberRequest req)
     {
-        try { await _service.SetMemberAsync(userId, req); return Ok(new { success = true }); }
+        try { await _service.SetMemberAsync(userId, req); await _service.SyncSeerrAsync(); return Ok(new { success = true }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
@@ -54,7 +54,7 @@ public sealed class SubscriptionController : ControllerBase
     [HttpPost("users/{userId:guid}/expiration")]
     public async Task<IActionResult> SetExpiration(Guid userId, [FromBody] PaidThroughRequest req)
     {
-        try { await _service.SetPaidThroughAsync(userId, req); return Ok(new { success = true }); }
+        try { await _service.SetPaidThroughAsync(userId, req); await _service.SyncSeerrAsync(); return Ok(new { success = true }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
@@ -72,6 +72,31 @@ public sealed class SubscriptionController : ControllerBase
     {
         await _service.ReconcileAsync(ct);
         return Ok(new { success = true });
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("seerr/settings")]
+    public async Task<IActionResult> SetSeerrSettings([FromBody] SeerrSettingsRequest req)
+    {
+        try { await _service.SetSeerrSettingsAsync(req); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("seerr/test")]
+    public async Task<IActionResult> TestSeerr(CancellationToken ct)
+    {
+        try { return Ok(new { message = await _service.TestSeerrAsync(ct) }); }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        { return StatusCode(502, new { message = "Seerr connection failed: " + ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("seerr/sync")]
+    public async Task<IActionResult> SyncSeerr(CancellationToken ct)
+    {
+        await _service.SyncSeerrAsync(ct);
+        return Ok(new { message = _service.SeerrStatusMessage });
     }
 
     [AllowAnonymous]

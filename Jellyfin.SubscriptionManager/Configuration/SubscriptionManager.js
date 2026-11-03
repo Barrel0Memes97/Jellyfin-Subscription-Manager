@@ -16,8 +16,70 @@ export default function SubscriptionManagerController(page) {
       return Math.round(Number(value) * 100);
     };
     const flash = (message, error) => { $('#sm-flash').textContent = message; $('#sm-flash').classList.toggle('sm-error', !!error); };
-    const userById = id => state?.users.find(u => u.userId === id);
-    const planById = id => state?.plans.find(p => p.id === id);
+    // Jellyfin 12 may serialize class instances with PascalCase while anonymous
+    // controller DTOs use camelCase. Normalize both (including false/0 values).
+    const field = (obj, key) => obj?.[key] ?? obj?.[key[0].toUpperCase() + key.slice(1)];
+    const guid = v => typeof v === 'string' ? v.toLowerCase() : (v ?? null);
+    const bool = (value, fallback = false) => value === undefined || value === null ? fallback : (value === true || value === 'true');
+    function normalizeOverview(raw) {
+      const plans = (field(raw, 'plans') || []).map(p => {
+        const originalPerms = field(p, 'jellyfinPermissions') || {};
+        const keys = ['enableMediaPlayback', 'enableRemoteAccess', 'enableContentDownloading', 'enableLiveTvAccess',
+          'enableVideoPlaybackTranscoding', 'enableAudioPlaybackTranscoding', 'enablePlaybackRemuxing'];
+        const jellyfinPermissions = Object.fromEntries(keys.map(key => [key, field(originalPerms, key) ?? null]));
+        return { id:guid(field(p, 'id')), name:field(p, 'name') ?? '', description:field(p, 'description') ?? '',
+          monthlyCents:Number(field(p, 'monthlyCents') ?? 0), enabled:bool(field(p, 'enabled'), true),
+          seerrRequestAccess:field(p, 'seerrRequestAccess') ?? 'inherit', jellyfinPermissions };
+      });
+      const users = (field(raw, 'users') || []).map(u => ({ ...u,
+        userId:guid(field(u, 'userId')), name:field(u, 'name') ?? '',
+        planId:guid(field(u, 'planId')), included:bool(field(u, 'included')),
+        administrator:bool(field(u, 'administrator')), disabled:bool(field(u, 'disabled')),
+        balanceCents:Number(field(u, 'balanceCents') ?? 0),
+        paidThrough:field(u, 'paidThrough') ?? null, nextChargeOn:field(u, 'nextChargeOn') ?? null,
+        status:field(u, 'status') ?? 'unknown'
+      }));
+      const ledger = (field(raw, 'ledger') || []).map(t => ({ ...t,
+        userId:guid(field(t, 'userId')), createdUtc:field(t, 'createdUtc'), kind:field(t, 'kind'),
+        amountCents:Number(field(t, 'amountCents') ?? 0),
+        balanceAfterCents:Number(field(t, 'balanceAfterCents') ?? 0), note:field(t, 'note') ?? '' }));
+      return { users, plans, ledger, activeCount:field(raw, 'activeCount') ?? 0,
+        enrolledCount:field(raw, 'enrolledCount') ?? 0,
+        totalCollectedCents:field(raw, 'totalCollectedCents') ?? 0,
+        totalBalanceCents:field(raw, 'totalBalanceCents') ?? 0,
+        timeZoneId:field(raw, 'timeZoneId') ?? 'UTC', banner:field(raw, 'banner') ?? null,
+        seerr:field(raw, 'seerr') ?? null };
+    }
+    const userById = id => state?.users.find(u => u.userId === guid(id));
+    const planById = id => state?.plans.find(p => p.id === guid(id));
+    const permNames = ['enableMediaPlayback', 'enableRemoteAccess', 'enableContentDownloading',
+      'enableLiveTvAccess', 'enableVideoPlaybackTranscoding', 'enableAudioPlaybackTranscoding',
+      'enablePlaybackRemuxing'];
+    function getPlanPermissions() {
+      const result = {};
+      page.querySelectorAll('[data-sm-plan-permission]').forEach(sel => {
+        result[sel.dataset.smPlanPermission] = sel.value === '' ? null : sel.value === 'true';
+      });
+      return result;
+    }
+    function setPlanPermissions(values = {}) {
+      page.querySelectorAll('[data-sm-plan-permission]').forEach(sel => {
+        const value = values[sel.dataset.smPlanPermission];
+        sel.value = value === true ? 'true' : value === false ? 'false' : '';
+      });
+    }
+    function showPlanEditor(p) {
+      $('#sm-plan-id').value = p?.id ?? '';
+      $('#sm-plan-name').value = p?.name ?? '';
+      $('#sm-plan-price').value = p ? (p.monthlyCents / 100).toFixed(2) : '5.00';
+      $('#sm-plan-enabled').checked = p ? p.enabled : true;
+      $('#sm-plan-desc').value = p?.description ?? '';
+      $('#sm-plan-seerr').value = p?.seerrRequestAccess ?? 'inherit';
+      setPlanPermissions(p?.jellyfinPermissions);
+      $('#sm-plan-editor-title').textContent = p ? 'Configure plan: ' + p.name : 'Create a plan';
+      showTab('plans');
+      $('#sm-plan-form').scrollIntoView?.({ behavior:'smooth', block:'start' });
+    }
     const optionsForPlans = (selected) => '<option value="">Select a plan...</option>' + (state?.plans || [])
       .filter(p => p.enabled || p.id === selected).map(p => `<option value="${p.id}" ${selected === p.id ? 'selected' : ''}>${escapeHtml(p.name)} (${usd(p.monthlyCents)}/mo)</option>`).join('');
     const usersOptions = (selected, includeAll) => (includeAll ? '<option value="">All users</option>' : '<option value="">Select a user...</option>') + state.users
@@ -41,9 +103,12 @@ export default function SubscriptionManagerController(page) {
         <td><span class="sm-status ${escapeHtml(u.status)}">${escapeHtml(u.status)}</span></td>
         <td>${u.administrator ? '—' : `<button class="sm-button alt" type="button" data-details="${u.userId}">Configure</button>`}</td>
       </tr>`).join('');
-      $('#sm-plans').innerHTML = state.plans.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${usd(p.monthlyCents)}</td>
-        <td>${p.enabled ? 'Yes' : 'Hidden'}</td><td>${state.users.filter(u => u.included && u.planId === p.id).length}</td>
-        <td><button class="sm-button alt" type="button" data-edit-plan="${p.id}">Edit</button></td></tr>`).join('') || '<tr><td colspan="5">No plans yet. Create one above.</td></tr>';
+      $('#sm-plans').innerHTML = state.plans.map(p => `<tr>
+        <td><strong>${escapeHtml(p.name)}</strong><div class="sm-hint sm-plan-description">${escapeHtml(p.description)}</div></td>
+        <td>${usd(p.monthlyCents)}</td>
+        <td>${p.enabled ? 'Yes' : 'Hidden'}</td>
+        <td>${state.users.filter(u => u.included && u.planId === p.id).length}</td>
+        <td><button class="sm-button alt" type="button" data-edit-plan="${p.id}">Configure</button></td></tr>`).join('') || '<tr><td colspan="5">No plans yet. Create one above.</td></tr>';
       const payUser = $('#sm-pay-user').value;
       $('#sm-pay-user').innerHTML = usersOptions(payUser, false);
       const ledgerUser = $('#sm-ledger-user').value;
@@ -52,7 +117,8 @@ export default function SubscriptionManagerController(page) {
       updatePayBalance();
       $('#sm-timezone').value = state.timeZoneId;
       if (state.banner) renderBannerSettings(state.banner);
-      if (selectedUser) showDetails(selectedUser);
+      if (state.seerr) renderSeerrSettings(state.seerr);
+      if (selectedUser) showDetails(selectedUser, false);
       showTab(tab);
     }
     function renderLedger() {
@@ -69,7 +135,7 @@ export default function SubscriptionManagerController(page) {
       const u = userById($('#sm-pay-user').value);
       $('#sm-pay-balance').textContent = u ? `${u.name} currently has ${usd(u.balanceCents)} available. ${u.status}.` : '';
     }
-    function showDetails(id) {
+    function showDetails(id, scroll = true) {
       const u = userById(id);
       if (!u || u.administrator) { $('#sm-detail').hidden = true; selectedUser = null; return; }
       selectedUser = id;
@@ -78,6 +144,7 @@ export default function SubscriptionManagerController(page) {
       $('#sm-detail-summary').textContent = `Status: ${u.status} | Balance: ${usd(u.balanceCents)} | Next charge: ${u.nextChargeOn || 'not scheduled'}`;
       $('#sm-detail-plan').innerHTML = optionsForPlans(u.planId);
       $('#sm-detail-expiry').value = u.paidThrough || '';
+      if (scroll) $('#sm-detail').scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     }
     const bFields = {
       enabled:['sm-b-enabled','checked'], showActive:['sm-b-active','checked'],
@@ -127,23 +194,38 @@ export default function SubscriptionManagerController(page) {
         b.showBalance ? 'Credit: $10.00' : ''].filter(Boolean).join(' · ');
       el.appendChild(detail);
     }
+    function renderSeerrSettings(settings) {
+      $('#sm-seerr-enabled').checked = bool(field(settings, 'enabled'));
+      $('#sm-seerr-url').value = field(settings, 'url') ?? '';
+      $('#sm-seerr-key').value = ''; // Never request or display the stored API key.
+      $('#sm-seerr-import').checked = bool(field(settings, 'autoImportUsers'));
+      $('#sm-seerr-clear-key').checked = false;
+      $('#sm-seerr-status').textContent = (field(settings, 'hasApiKey') ? 'API key saved. ' : 'No API key saved. ') +
+        (field(settings, 'status') || '');
+    }
     async function api(path, data) {
       const config = { type: data === undefined ? 'GET' : 'POST', url: ApiClient.getUrl('SubscriptionManager/' + path), dataType: 'json' };
       if (data !== undefined) { config.contentType = 'application/json'; config.data = JSON.stringify(data); }
       return ApiClient.ajax(config);
     }
     async function refresh(message) {
-      state = await api('overview');
+      state = normalizeOverview(await api('overview'));
       render();
       if (message) flash(message, false);
+    }
+    function getError(e) {
+      let detail = e?.responseJSON?.message || e?.message || e?.statusText || 'Request failed';
+      if (typeof e?.responseText === 'string') {
+        try { const data = JSON.parse(e.responseText); detail = data.message || data.title || detail; }
+        catch (_) { /* not JSON */ }
+      }
+      return detail + (e?.status && !String(detail).includes(String(e.status)) ? ` (HTTP ${e.status})` : '');
     }
     async function invoke(path, payload, message) {
       flash('Saving...', false);
       try { await api(path, payload); await refresh(message || 'Saved successfully.'); }
       catch (e) {
-        let detail = e?.responseJSON?.message || e?.message || e?.statusText || 'Request failed';
-        if (typeof e?.responseText === 'string') { try { detail = JSON.parse(e.responseText).message || detail; } catch (_) { } }
-        flash(detail, true);
+        flash(getError(e), true);
         throw e;
       }
     }
@@ -155,12 +237,11 @@ export default function SubscriptionManagerController(page) {
       if (target.id === 'sm-close-detail') { selectedUser = null; $('#sm-detail').hidden = true; return; }
       if (target.dataset.editPlan) {
         const p = planById(target.dataset.editPlan);
-        $('#sm-plan-id').value = p.id; $('#sm-plan-name').value = p.name;
-        $('#sm-plan-price').value = (p.monthlyCents / 100).toFixed(2);
-        $('#sm-plan-enabled').checked = p.enabled;
-        $('#sm-plan-editor-title').textContent = 'Edit plan'; return;
+        if (p) showPlanEditor(p);
+        else flash('Plan not found. Refresh the page.', true);
+        return;
       }
-      if (target.id === 'sm-plan-new') { $('#sm-plan-form').reset(); $('#sm-plan-id').value = ''; $('#sm-plan-editor-title').textContent = 'Create a plan'; return; }
+      if (target.id === 'sm-plan-new') { showPlanEditor(null); return; }
       if (target.id === 'sm-refresh' || target.id === 'sm-sync') {
         try { await invoke('sync', {}, 'Users and subscription access synchronized.'); } catch (_) { }
       }
@@ -170,6 +251,14 @@ export default function SubscriptionManagerController(page) {
         try { await invoke('users/' + selectedUser, { included: u.included, planId }, 'User plan saved.'); } catch (_) { }
       }
       if (target.id === 'sm-export') exportCsv();
+      if (target.id === 'sm-seerr-test') {
+        try { const result = await api('seerr/test', {}); flash(field(result, 'message') || 'Seerr connection succeeded.'); }
+        catch (e) { flash('Seerr connection failed: ' + getError(e), true); }
+      }
+      if (target.id === 'sm-seerr-sync') {
+        try { const result = await api('seerr/sync', {}); await refresh(field(result, 'message') || 'Seerr sync completed.'); }
+        catch (e) { flash('Seerr sync failed: ' + getError(e), true); }
+      }
     });
     page.addEventListener('change', async ev => {
       const t = ev.target;
@@ -192,6 +281,8 @@ export default function SubscriptionManagerController(page) {
       ev.preventDefault();
       try {
         await invoke('plans', { id: $('#sm-plan-id').value || null, name: $('#sm-plan-name').value,
+          description: $('#sm-plan-desc').value, jellyfinPermissions: getPlanPermissions(),
+          seerrRequestAccess: $('#sm-plan-seerr').value,
           monthlyCents: cents($('#sm-plan-price').value), enabled: $('#sm-plan-enabled').checked }, 'Plan saved.');
         $('#sm-plan-new').click();
       } catch (_) { }
@@ -219,6 +310,16 @@ export default function SubscriptionManagerController(page) {
     $('#sm-settings-form').addEventListener('submit', async ev => {
       ev.preventDefault();
       try { await invoke('settings', { timeZoneId: $('#sm-timezone').value.trim() }, 'Billing time zone saved.'); } catch (_) { }
+    });
+    $('#sm-seerr-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try {
+        const payload = { enabled: $('#sm-seerr-enabled').checked,
+          url: $('#sm-seerr-url').value.trim(), apiKey: $('#sm-seerr-key').value.trim(),
+          autoImportUsers: $('#sm-seerr-import').checked,
+          clearApiKey: $('#sm-seerr-clear-key').checked };
+        await invoke('seerr/settings', payload, 'Seerr settings saved. Run Test connection to verify.');
+      } catch (_) { }
     });
     function exportCsv() {
       if (!state) return;
