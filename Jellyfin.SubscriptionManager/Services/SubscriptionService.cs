@@ -73,10 +73,15 @@ public sealed class SubscriptionService
         return member;
     }
 
+    // Jellyfin 12.x exposes persisted user permission rows on User.Permissions.
+    // HasPermission(...) is not part of the public types referenced by plugins.
+    private static bool HasGrantedPermission(User user, PermissionKind kind) =>
+        user.Permissions.Any(permission => permission.Kind == kind && permission.Value);
+
     private User RequireUser(Guid id)
     {
         var user = _users.GetUserById(id) ?? throw new ArgumentException("User does not exist in Jellyfin");
-        if (user.HasPermission(PermissionKind.IsAdministrator))
+        if (HasGrantedPermission(user, PermissionKind.IsAdministrator))
             throw new ArgumentException("Administrator users cannot be enrolled");
         return user;
     }
@@ -140,8 +145,9 @@ public sealed class SubscriptionService
     private async Task ApplyAccessAsync(Membership member)
     {
         var user = _users.GetUserById(member.UserId);
-        if (user is null || user.HasPermission(PermissionKind.IsAdministrator)) return;
-        if (user.HasPermission(PermissionKind.IsDisabled)) return; // Respect manual account disable.
+        if (user is null) return;
+        if (HasGrantedPermission(user, PermissionKind.IsAdministrator)) return;
+        if (HasGrantedPermission(user, PermissionKind.IsDisabled)) return; // Respect manual account disable.
         AccessSchedule[] desired;
         if (member.RestorePending)
         {
@@ -151,7 +157,8 @@ public sealed class SubscriptionService
         else if (member.Included)
         {
             desired = member.PaidThrough.HasValue && member.PaidThrough.Value >= Today()
-                ? Array.Empty<AccessSchedule>() : LockedSchedule(user.Id);
+                ? (member.OriginalSchedulesCaptured ? Restore(member, user.Id) : Array.Empty<AccessSchedule>())
+                : LockedSchedule(user.Id);
         }
         else return;
 
@@ -181,7 +188,8 @@ public sealed class SubscriptionService
         {
             ct.ThrowIfCancellationRequested();
             var user = _users.GetUserById(member.UserId);
-            if (user is null || user.HasPermission(PermissionKind.IsAdministrator)) continue;
+            if (user is null) continue;
+            if (HasGrantedPermission(user, PermissionKind.IsAdministrator)) continue;
             if (member.Included) ChargeIfDue(member, today);
             try { await ApplyAccessAsync(member).ConfigureAwait(false); }
             catch (Exception ex) { _logger.LogError(ex, "Failed to synchronize access for user {UserId}", member.UserId); }
@@ -206,8 +214,8 @@ public sealed class SubscriptionService
                 .Select(u =>
                 {
                     var m = _state.Memberships.FirstOrDefault(x => x.UserId == u.Id);
-                    var admin = u.HasPermission(PermissionKind.IsAdministrator);
-                    var disabled = u.HasPermission(PermissionKind.IsDisabled);
+                    var admin = HasGrantedPermission(u, PermissionKind.IsAdministrator);
+                    var disabled = HasGrantedPermission(u, PermissionKind.IsDisabled);
                     var status = admin ? "administrator" : disabled ? "disabled" : m?.Included != true ? "not managed"
                         : m.PlanId is null ? "no plan"
                         : m.PaidThrough.HasValue && m.PaidThrough.Value >= today ? "active" : "expired";
@@ -379,7 +387,7 @@ public sealed class SubscriptionService
             if (user is null) throw new ArgumentException("User does not exist");
             var b = _state.Banner ?? new BannerSettings();
             var today = Today();
-            var admin = user.HasPermission(PermissionKind.IsAdministrator);
+            var admin = HasGrantedPermission(user, PermissionKind.IsAdministrator);
             var m = _state.Memberships.FirstOrDefault(x => x.UserId == userId);
             var plan = _state.Plans.FirstOrDefault(p => p.Id == m?.PlanId);
             var enrolled = m?.Included == true;
@@ -387,7 +395,7 @@ public sealed class SubscriptionService
                 m!.PaidThrough.HasValue && m.PaidThrough.Value >= today
                     ? (m.PaidThrough.Value.DayNumber - today.DayNumber <= b.WarningDays ? "expiring" : "active")
                     : "expired";
-            var show = b.Enabled && !user.HasPermission(PermissionKind.IsDisabled) &&
+            var show = b.Enabled && !HasGrantedPermission(user, PermissionKind.IsDisabled) &&
                 (admin ? b.ShowAdmins : status switch
                 {
                     "active" => b.ShowActive,

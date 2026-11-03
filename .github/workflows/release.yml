@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version with four numeric components, e.g. 0.2.0.0'
+        description: 'Version with four numeric components, e.g. 0.2.1.0'
         required: true
         type: string
 
@@ -71,7 +71,7 @@ jobs:
             --title "Subscription Manager ${{ steps.version.outputs.version }}" \
             --generate-notes --verify-tag
         # workflow_dispatch requires the tag to already exist. For a first release:
-        # git tag v0.2.0.0 && git push origin v0.2.0.0
+        # git tag v0.2.1.0 && git push origin v0.2.1.0
 
       - name: Check out catalog manifest from main
         uses: actions/checkout@v4
