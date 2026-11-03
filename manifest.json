@@ -8,6 +8,14 @@
     "owner": "Barrel0Memes97",
     "versions": [
       {
+        "changelog": "Subscription Manager 0.2.4.1 for Jellyfin 12.4. Plan permissions, account balances, Seerr integration and banners.",
+        "targetAbi": "12.4.0.0",
+        "version": "0.2.4.1",
+        "sourceUrl": "https://github.com/Barrel0Memes97/Jellyfin-Subscription-Manager/releases/download/v0.2.4.1/SubscriptionManager_v0.2.4.1.zip",
+        "checksum": "D203E0C05171015203165660BD2FE1BA",
+        "timestamp": "2026-11-03T07:27:44Z"
+      },
+      {
         "changelog": "Subscription Manager 0.2.3.0 for Jellyfin 12.4. Plan permissions, account balances, Seerr integration and banners.",
         "targetAbi": "12.4.0.0",
         "version": "0.2.3.0",
