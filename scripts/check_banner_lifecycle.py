@@ -23,14 +23,16 @@ with sync_playwright() as pw:
         page.set_content('''<html><head></head><body>
             <header id="jf-app-header">Jellyfin top navigation</header>
             <main id="indexPage"><div id="homeTab" class="tabContent is-active">
-              <div id="slides-container">Media Bar slideshow</div>
-              <div class="homeSectionsContainer"><div>Movie rows</div></div>
+              <div class="homePageMain">
+                <div id="slides-container">Media Bar slideshow</div>
+                <div class="homeSectionsContainer"><div>Movie rows</div></div>
+              </div>
             </div></main>
         </body></html>''')
         page.evaluate('''() => {
           location.hash = '/home';
           Object.defineProperty(document, 'currentScript', {
-             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.5'})
+             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.6'})
           });
           window.bannerRequests = 0;
           window.userId = 'alice';
@@ -47,12 +49,20 @@ with sync_playwright() as pw:
         page.locator(PANEL).wait_for(timeout=3000)
         check(page.locator(PANEL).count() == 1, 'Banner mounts once on initial Home route')
         check('Welcome, Alice!' in page.locator(PANEL).inner_text(), 'Correct user name is shown')
-        check(page.evaluate('''() => document.querySelector('#homeTab').previousElementSibling.id''') == PANEL.lstrip("#"),
-              'Top position keeps the banner under navigation, outside the rendered Home tab')
-        check(page.evaluate('''() => document.querySelector('#jf-personalized-user-banner').nextElementSibling.id''') == 'homeTab',
-              'Top position places the banner immediately BEFORE the Home tab and its Media Bar')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip("#"),
+              'Top prepends to the same .homePageMain as the original injected script')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip('#'),
+              'Top banner is directly above the Media Bar')
         check(page.evaluate('''() => document.getElementById('jf-app-header').compareDocumentPosition(document.getElementById('jf-personalized-user-banner')) & Node.DOCUMENT_POSITION_FOLLOWING''') != 0,
               'Jellyfin top menu stays above the banner')
+
+        # Reproduce the v0.2.4.5 failure: the parent of #homeTab allows
+        # only the active tab as a visible child after initialization. A
+        # banner inserted as a sibling is connected but CSS-invisible.
+        page.add_style_tag(content='#indexPage > :not(#homeTab) { display:none !important; }')
+        page.wait_for_timeout(300)
+        check(page.locator(PANEL).is_visible(),
+              'Home tab sibling visibility rules cannot hide the Top banner')
 
         # The position setting must change actual DOM placement on Home.
         page.evaluate('''() => {
@@ -105,24 +115,24 @@ with sync_playwright() as pw:
           document.dispatchEvent(new Event('visibilitychange'));
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('#homeTab').previousElementSibling.id''') == PANEL.lstrip("#"),
-              'Switching back to inline top restores stable placement above the Home tab')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip("#"),
+              'Switching back to inline top prepends into .homePageMain')
 
         # Media Bar plugins may insert their hero after the subscription banner is loaded.
         page.evaluate('''() => {
           const bar = document.querySelector('#slides-container');
           bar.remove();
           const middle = document.createElement('div'); middle.id = 'home-intro';
-          document.querySelector('#homeTab').prepend(middle);
-          document.querySelector('#homeTab').append(bar);
+          document.querySelector('.homePageMain').prepend(middle);
+          document.querySelector('.homePageMain').append(bar);
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('#jf-personalized-user-banner').nextElementSibling.id''') == 'homeTab',
-              'Late-added media bar stays below the banner without moving its anchor')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip('#'),
+              'Late-added media bar stays below banner after observer prepends it')
 
         # Reproduce the Top-only regression: Media Bar replaces its internal
-        # wrapper many times while fetching/rendering slides. The banner must
-        # NEVER be moved into that wrapper or disconnected in the process.
+        # wrapper many times. The banner must remain outside the slideshow
+        # wrapper, using the original .homePageMain placement.
         page.evaluate('''() => {
           const tab = document.querySelector('#homeTab');
           const media = tab.querySelector('#slides-container');
@@ -132,12 +142,12 @@ with sync_playwright() as pw:
           wrapper.appendChild(media);
           window.stableBannerNode = document.querySelector('#jf-personalized-user-banner');
           window.bannerWasDisconnected = false;
-          window.bannerWasInsideHome = false;
+          window.bannerWasInsideMedia = false;
           window.bannerTrackedChanges = 0;
           const check = () => {
             const banner = window.stableBannerNode;
             if (!banner.isConnected) window.bannerWasDisconnected = true;
-            if (tab.contains(banner)) window.bannerWasInsideHome = true;
+            if (document.querySelector('.media-bar-react-wrapper')?.contains(banner)) window.bannerWasInsideMedia = true;
           };
           window.mediaBarSimulator = setInterval(() => {
             const hero = tab.querySelector('.media-bar-react-wrapper');
@@ -155,16 +165,16 @@ with sync_playwright() as pw:
         page.evaluate('''() => {clearInterval(window.mediaBarSimulator); window.testBannerObserver.disconnect();}''')
         check(page.evaluate('bannerTrackedChanges') >= 20,
               'Simulated Media Bar repeatedly replacing its internal React wrapper')
-        check(page.evaluate('!bannerWasDisconnected && !bannerWasInsideHome'),
-              'Top banner stays continuously attached OUTSIDE the replaced Media Bar subtree')
+        check(page.evaluate('!bannerWasDisconnected && !bannerWasInsideMedia'),
+              'Top banner stays connected outside the replaced slideshow wrapper')
         check(page.evaluate('stableBannerNode === document.querySelector("#jf-personalized-user-banner")'),
               'Repeated Media Bar redraws preserve the same banner element')
 
         # React-like replacement of home content, without touching body immediate child list.
         requests_before_remount = page.evaluate('bannerRequests')
         page.evaluate('''() => {
-          document.querySelector('#homeTab').innerHTML =
-            '<div class="homeSectionsContainer"><div>New movie rows</div></div>';
+          document.querySelector('.homePageMain').innerHTML =
+            '<div id="slides-container">New Media Bar</div><div class="homeSectionsContainer"><div>New movie rows</div></div>';
         }''')
         page.wait_for_timeout(150)
         check(page.locator(PANEL).count() == 1, 'Banner remounts after nested React page rebuild')
@@ -175,11 +185,39 @@ with sync_playwright() as pw:
           document.querySelector('#indexPage').replaceChildren();
           const tab = document.createElement('div');
           tab.id = 'homeTab'; tab.className = 'tabContent is-active';
-          tab.innerHTML = '<div class="homeSectionsContainer">Fresh Home</div>';
+          tab.innerHTML = '<div class="homePageMain"><div id="slides-container">Fresh Media Bar</div><div class="homeSectionsContainer">Fresh Home</div></div>';
           document.querySelector('#indexPage').append(tab);
         }''')
         page.wait_for_timeout(150)
         check(page.locator(PANEL).count() == 1, 'Banner survives replacement of the entire Home tab')
+
+        # Jellyfin 12 may retain a hidden duplicate #indexPage *before* the
+        # actually visible instance. The banner must never be moved to it.
+        page.evaluate('''() => {
+          const cached = document.createElement('main');
+          cached.id = 'indexPage'; cached.className = 'hide';
+          cached.innerHTML = '<div id="homeTab"><div class="homePageMain">Stale home cache</div></div>';
+          document.body.insertBefore(cached, document.querySelector('#indexPage'));
+          window.cachedHome = cached;
+        }''')
+        page.wait_for_timeout(170)
+        check(page.locator(PANEL).count() == 1 and page.locator(PANEL).is_visible(),
+              'Top banner remains visible with a hidden duplicate Home page')
+        check(page.locator(PANEL).evaluate('el => !window.cachedHome.contains(el)'),
+              'Top anchor chooses live Home over a stale cached #indexPage')
+        page.evaluate('window.cachedHome.remove()')
+
+        # A real disappearing banner can be diagnosed with this safe helper.
+        diagnostic = page.evaluate('window.__subscriptionManagerBannerDebug()')
+        check(diagnostic['bannerConnected'] and diagnostic['bannerVisible']
+              and diagnostic['homeContainerVisible'] and not diagnostic['dismissed'],
+              'Built-in diagnostics confirm live Home anchor and visible banner')
+        check(diagnostic['requestedPosition'] == 'top',
+              'Diagnostics report the currently configured banner position')
+        # Regression for the reported ~1-second disappearance after refresh.
+        page.wait_for_timeout(1800)
+        check(page.locator(PANEL).count() == 1 and page.locator(PANEL).is_visible(),
+              'Banner stays visible after startup/Media Bar settling period')
 
         # SPA navigation away, then back; tab can remain cached while hidden.
         page.evaluate("() => {location.hash = '/details?id=42'; dispatchEvent(new Event('hashchange'));}")

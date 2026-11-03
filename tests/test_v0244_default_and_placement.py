@@ -17,15 +17,17 @@ class DefaultPlanAndBannerPlacement(unittest.TestCase):
         self.assertIn("invoke('plans/default', {planId:plan.id}", js)
         self.assertIn('(t.checked ? state.defaultPlanId : null)', js)
 
-    def test_top_anchor_is_above_hero_not_inside_rows(self):
+    def test_top_anchor_uses_original_home_container(self):
         js=(WEB/'banner.js').read_text()
-        self.assertIn('function homeTopPlacement()',js)
-        self.assertIn('function homeTopPlacement()',js)
-        self.assertIn('return {target: tab.parentElement, before: tab}',js)
-        self.assertIn('target.insertBefore(bannerElement, before)',js)
-        self.assertIn('target.prepend(bannerElement)',js)
-        self.assertIn('target.appendChild(bannerElement)',js)
-        self.assertIn('const tab = activeHomeTab()',js)
-        self.assertIn('if (!hasHomeRoute()) { remove(); return; }',js)
+        self.assertIn('function findHomeContainer()', js)
+        self.assertIn("'.homePageMain'", js)
+        self.assertIn("'.homePage'", js)
+        self.assertIn("'.homeSectionsContainer'", js)
+        self.assertIn("'.mainAnimatedPage'", js)
+        self.assertIn("'.pageContainer'", js)
+        self.assertIn('target.prepend(bannerElement)', js)
+        self.assertIn('target.appendChild(bannerElement)', js)
+        self.assertNotIn('target.insertBefore(bannerElement, before)', js)
+        self.assertIn('if (!hasHomeRoute()) { remove(); return; }', js)
 
 if __name__ == '__main__': unittest.main()

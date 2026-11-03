@@ -1,8 +1,8 @@
 /* Subscription Manager banner for Jellyfin 12 Web.
  * The home screen is rebuilt by Jellyfin's router/React after initial load.
- * Mounting once, or observing only document.body's immediate children, makes
- * the banner flash on refresh and then vanish. Retain our element and remount
- * it in the CURRENT home-page container after DOM and navigation changes.
+ * Use the original injected banner's findHomeContainer() + prepend() anchor.
+ * #homeTab siblings in Jellyfin 12 can disappear with tab wrappers. Retain
+ * the banner and remount into the visible Home page on DOM/navigation changes.
  * Only /SubscriptionManager/me (authenticated current user) is requested. */
 (() => {
   'use strict';
@@ -57,27 +57,39 @@
     return [...nodes].find(visiblyPresent) || null;
   }
 
-  // The slideshow can replace its own parent or the contents of #homeTab
-  // while loading slides. Inserting inside either tree caused our TOP banner
-  // to be removed with those nodes and repeatedly reattached (visible flash).
-  // Instead, mount as a SIBLING immediately BEFORE the active Home tab. This
-  // still puts it below Jellyfin's navigation and above the media slideshow,
-  // but keeps the banner outside React/Media Bar's frequently replaced tree.
-  function homeTopPlacement() {
-    const tab = activeHomeTab();
-    if (tab?.parentElement) {
-      return {target: tab.parentElement, before: tab};
+  // Match the working standalone jellyfin-banner.js implementation:
+  // findHomeContainer() chooses a home PAGE content container and Top calls
+  // container.prepend(banner). Do NOT insert the banner as a sibling of
+  // #homeTab: in Jellyfin 12 the tab's parent can be a transient/hidden
+  // React tab wrapper, causing the banner to vanish after initial painting.
+  const homeContainerSelectors = [
+    '.homePageMain',
+    '.homePage',
+    '.homeSectionsContainer',
+    '.mainAnimatedPage',
+    '.pageContainer'
+  ];
+
+  function findHomeContainer() {
+    // Jellyfin 12 can leave hidden, duplicate #indexPage/Home nodes behind.
+    // Unlike the old script's first querySelector, prefer the actually visible
+    // instance of each selector so we never mount into a cached hidden page.
+    for (const selector of homeContainerSelectors) {
+      const candidate = [...document.querySelectorAll(selector)].find(visiblyPresent);
+      if (!candidate) continue;
+
+      // If modern Home renders slides next to .homeSectionsContainer, the
+      // sections container alone is too low; use its visible Home tab to stay
+      // above BOTH the slideshow and regular media rows.
+      if (selector === '.homeSectionsContainer') {
+        const tab = candidate.closest('#homeTab');
+        if (tab && visiblyPresent(tab) && tab.querySelector('#slides-container')) return tab;
+      }
+      return candidate;
     }
-    // Avoid jumping to a fallback container while an existing Home tab is
-    // temporarily hidden during a route/CSS transition. Keep its last anchor.
-    if (document.querySelector('#homeTab')) return null;
-    // Legacy web layouts use homePageMain/homePage rather than #homeTab.
-    const root = [...document.querySelectorAll(
-      '#indexPage .homePageMain, .homePageMain, #indexPage .homePage, .homePage')]
-      .find(visiblyPresent);
-    if (!root) return null;
-    if (root.parentElement) return {target: root.parentElement, before: root};
-    return {target: root, before: root.firstElementChild};
+
+    // Newer Home layout with neither legacy CSS class: same prepend approach.
+    return activeHomeTab() || [...document.querySelectorAll('#indexPage')].find(visiblyPresent) || null;
   }
 
   function hasHomeRoute() {
@@ -151,15 +163,14 @@
       }
       return;
     }
-    const placement = homeTopPlacement();
-    if (!placement) return;
-    const { target, before } = placement;
-    if (before) {
-      if (bannerElement.parentElement !== target || bannerElement.nextElementSibling !== before) {
-        target.insertBefore(bannerElement, before);
-      }
-    } else if (bannerElement.parentElement !== target || target.firstElementChild !== bannerElement) {
+    // The original injected banner used findHomeContainer() + prepend().
+    // Keep the element inside the actual Home content area and before Media
+    // Bar rather than outside the active tab in a sibling React wrapper.
+    const target = findHomeContainer();
+    if (!target) return; // Do not remove on a transient Home render gap.
+    if (bannerElement.parentElement !== target || target.firstElementChild !== bannerElement) {
       target.prepend(bannerElement);
+      console.debug('[Subscription Manager] Banner mounted at top in', target);
     }
   }
 
@@ -273,6 +284,23 @@
       if (lastData) ensureMounted();
     } finally { requestInFlight = false; }
   }
+
+  // Non-sensitive diagnostics for verifying real Jellyfin DOM placement.
+  // In the browser console: window.__subscriptionManagerBannerDebug()
+  window.__subscriptionManagerBannerDebug = () => {
+    const target = findHomeContainer();
+    return {
+      route: location.hash,
+      requestedPosition: field(lastData?.appearance || {}, 'position') || 'top',
+      bannerConnected: Boolean(bannerElement?.isConnected),
+      bannerVisible: visiblyPresent(bannerElement),
+      bannerParent: bannerElement?.parentElement?.className || null,
+      homeContainer: target?.className || null,
+      homeContainerVisible: visiblyPresent(target),
+      dismissed: Date.now() < dismissedUntil,
+      serverAllowsBanner: Boolean(lastData?.show)
+    };
+  };
 
   function start() {
     if (document.body) {
