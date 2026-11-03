@@ -28,7 +28,7 @@ with sync_playwright() as pw:
         page.evaluate('''() => {
           location.hash = '/home';
           Object.defineProperty(document, 'currentScript', {
-             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.2'})
+             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.3'})
           });
           window.bannerRequests = 0;
           window.userId = 'alice';
@@ -45,15 +45,72 @@ with sync_playwright() as pw:
         page.locator(PANEL).wait_for(timeout=3000)
         check(page.locator(PANEL).count() == 1, 'Banner mounts once on initial Home route')
         check('Welcome, Alice!' in page.locator(PANEL).inner_text(), 'Correct user name is shown')
+        check(page.evaluate('''() => document.querySelector('.homeSectionsContainer').firstElementChild.id''') == PANEL.lstrip("#"),
+              'Top position places the inline banner before Home content')
+
+        # The position setting must change actual DOM placement on Home.
+        page.evaluate('''() => {
+          window.mockBanner.appearance = {...window.mockBanner.appearance, position:'bottom'};
+          window.mockBanner.customColor = '#336699';
+          window.mockBanner.customMessage = 'Special note for {name}';
+          document.dispatchEvent(new Event('visibilitychange'));
+        }''')
+        page.wait_for_timeout(150)
+        check(page.evaluate('''() => document.querySelector('.homeSectionsContainer').lastElementChild.id''') == PANEL.lstrip("#"),
+              'Bottom position places inline banner after Home content')
+        check('Special note for Alice' in page.locator(PANEL).inner_text(),
+              'Personal active message renders with substitutions')
+        check('51, 102, 153' in page.locator(PANEL).get_attribute('style') or '#336699' in page.locator(PANEL).get_attribute('style'),
+              'Personal active color overrides shared active color')
+
+        page.evaluate('''() => {
+          window.mockBanner.status = 'expiring';
+          window.mockBanner.appearance = {...window.mockBanner.appearance,
+            expiringText:'Your renewal is approaching', expiringColor:'#92400e'};
+          document.dispatchEvent(new Event('visibilitychange'));
+        }''')
+        page.wait_for_timeout(150)
+        check('Your renewal is approaching' in page.locator(PANEL).inner_text() and
+              'Special note' not in page.locator(PANEL).inner_text(),
+              'Expiration warning takes precedence over personal active message')
+        check('146, 64, 14' in page.locator(PANEL).get_attribute('style') or '#92400e' in page.locator(PANEL).get_attribute('style'),
+              'Expiration warning color takes precedence over personal active color')
+
+        # Floating notifications must switch edges, without retaining the old style.
+        page.evaluate('''() => {
+          window.mockBanner.status = 'active';
+          window.mockBanner.appearance = {...window.mockBanner.appearance,
+            layout:'floating', position:'bottom'};
+          document.dispatchEvent(new Event('visibilitychange'));
+        }''')
+        page.wait_for_timeout(150)
+        check(page.locator(PANEL).evaluate('el => el.parentElement === document.body && !!el.style.bottom && !el.style.top'),
+              'Floating bottom is fixed to the lower screen edge')
+        page.evaluate('''() => {
+          window.mockBanner.appearance.position = 'top';
+          document.dispatchEvent(new Event('visibilitychange'));
+        }''')
+        page.wait_for_timeout(150)
+        check(page.locator(PANEL).evaluate('el => !!el.style.top && !el.style.bottom'),
+              'Floating top resets the previous bottom placement')
+        page.evaluate('''() => {
+          window.mockBanner.appearance = {...window.mockBanner.appearance,
+            layout:'home', position:'top'};
+          document.dispatchEvent(new Event('visibilitychange'));
+        }''')
+        page.wait_for_timeout(150)
+        check(page.evaluate('''() => document.querySelector('.homeSectionsContainer').firstElementChild.id''') == PANEL.lstrip("#"),
+              'Switching back to inline top restores the original placement')
 
         # React-like replacement of home content, without touching body immediate child list.
+        requests_before_remount = page.evaluate('bannerRequests')
         page.evaluate('''() => {
           document.querySelector('#homeTab').innerHTML =
             '<div class="homeSectionsContainer"><div>New movie rows</div></div>';
         }''')
         page.wait_for_timeout(150)
         check(page.locator(PANEL).count() == 1, 'Banner remounts after nested React page rebuild')
-        check(page.evaluate('bannerRequests') == 1, 'DOM repairs do not cause extra API requests')
+        check(page.evaluate('bannerRequests') == requests_before_remount, 'DOM repairs do not cause extra API requests')
 
         # Removal of all home structure and later mount on the same route.
         page.evaluate('''() => {

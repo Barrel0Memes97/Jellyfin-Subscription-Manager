@@ -55,6 +55,7 @@ public sealed partial class SubscriptionService
             member.BillingCycle = string.IsNullOrWhiteSpace(member.BillingCycle) ? "legacy" : member.BillingCycle;
             member.BannerTitle ??= string.Empty;
             member.BannerColor ??= string.Empty;
+            member.BannerMessage ??= string.Empty;
         }
     }
 
@@ -369,7 +370,7 @@ public sealed partial class SubscriptionService
                             ? (DateOnly?)NextScheduledFriday(m.PaidThrough?.AddDays(1) ?? today, m.BillingCycle) : null),
                         billingCycle = m?.BillingCycle ?? "legacy", openingRecorded = m?.OpeningRecorded ?? false,
                         coverageStartsOn = m?.CoverageStartsOn, bannerTitle = m?.BannerTitle ?? "",
-                        bannerColor = m?.BannerColor ?? "", status
+                        bannerColor = m?.BannerColor ?? "", bannerMessage = m?.BannerMessage ?? "", status
                     };
                 }).ToArray();
             return new
@@ -377,6 +378,7 @@ public sealed partial class SubscriptionService
                 today,
                 timeZoneId = _state.TimeZoneId,
                 banner = _state.Banner,
+                defaultPlanId = _state.DefaultPlanId,
                 seerr = new { enabled = _state.Seerr.Enabled, url = _state.Seerr.Url,
                     hasApiKey = !string.IsNullOrWhiteSpace(_state.Seerr.ApiKey),
                     autoImportUsers = _state.Seerr.AutoImportUsers,
@@ -443,14 +445,34 @@ public sealed partial class SubscriptionService
                     ?? throw new ArgumentException("Plan not found")
                 : new Plan();
             if (!_state.Plans.Contains(plan)) _state.Plans.Add(plan);
+            if (_state.DefaultPlanId == plan.Id && !req.Enabled)
+                throw new ArgumentException("Choose another default plan before hiding this one");
             plan.Name = req.Name.Trim();
             plan.MonthlyCents = req.MonthlyCents;
             plan.Description = req.Description?.Trim() ?? string.Empty;
             plan.JellyfinPermissions = req.JellyfinPermissions ?? new PlanJellyfinPermissions();
             plan.SeerrRequestAccess = req.SeerrRequestAccess ?? "inherit";
             plan.Enabled = req.Enabled; // Existing members keep their assigned plan even if hidden.
+            // A single available plan is an unambiguous default for newly enrolled users.
+            if (!_state.DefaultPlanId.HasValue && _state.Plans.Count(p => p.Enabled) == 1)
+                _state.DefaultPlanId = _state.Plans.Single(p => p.Enabled).Id;
             Save();
             await ReconcileLockedAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task SetDefaultPlanAsync(DefaultPlanRequest req)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!req.PlanId.HasValue && _state.Plans.Any(p => p.Enabled))
+                throw new ArgumentException("Choose an available plan as the default");
+            if (req.PlanId.HasValue && !_state.Plans.Any(p => p.Id == req.PlanId.Value && p.Enabled))
+                throw new ArgumentException("Default plan must be an available plan");
+            _state.DefaultPlanId = req.PlanId;
+            Save();
         }
         finally { _gate.Release(); }
     }
@@ -462,10 +484,15 @@ public sealed partial class SubscriptionService
         {
             var user = RequireUser(userId);
             var m = GetMember(userId);
-            if (req.PlanId.HasValue && !_state.Plans.Any(p => p.Id == req.PlanId.Value))
+            // A checkbox enrollment with no selected plan uses the configured default.
+            // Explicit plan selection in the UI sends Included=true atomically.
+            // Turning a checkbox off keeps the user's assigned plan for easy re-enrollment.
+            var chosenPlanId = req.Included && !req.PlanId.HasValue
+                ? _state.DefaultPlanId : req.PlanId;
+            if (chosenPlanId.HasValue && !_state.Plans.Any(p => p.Id == chosenPlanId.Value))
                 throw new ArgumentException("Unknown plan");
-            if (req.Included && !req.PlanId.HasValue)
-                throw new ArgumentException("Choose an existing plan first");
+            if (req.Included && !chosenPlanId.HasValue)
+                throw new ArgumentException("Set a default plan in Plans, or select a plan for this user first");
             if (req.Included)
             {
                 if (!m.Included)
@@ -487,7 +514,7 @@ public sealed partial class SubscriptionService
                 m.RestorePending = true;
             }
             // Assigning a plan must work even before a user is enrolled.
-            m.PlanId = req.PlanId;
+            m.PlanId = chosenPlanId;
             Save();
             await ReconcileLockedAsync(CancellationToken.None).ConfigureAwait(false);
         }
@@ -606,7 +633,8 @@ public sealed partial class SubscriptionService
                 balanceCents = b.ShowBalance && enrolled ? m?.BalanceCents : null,
                 renewalOn = b.ShowRenewal && enrolled ? m?.NextChargeOn : null,
                 customTitle = m?.BannerTitle,
-                customColor = m?.BannerColor,
+                customColor = status == "active" ? m?.BannerColor : null,
+                customMessage = status == "active" ? m?.BannerMessage : null,
                 daysRemaining = b.ShowDaysRemaining && enrolled && m?.PaidThrough is { } through
                     ? Math.Max(0, through.DayNumber - today.DayNumber) : (int?)null,
                 appearance = new

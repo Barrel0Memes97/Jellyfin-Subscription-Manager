@@ -44,7 +44,9 @@
     #subscriptionManagerPage #sm-flash { scroll-margin-top: 86px; }
     #subscriptionManagerPage .sm-hidden { display:none !important; }
     #subscriptionManagerPage .sm-banner-viewport { border:1px solid #5558; border-radius:12px;
-      background: var(--background, #18191b); padding:22px 12px; margin:12px 0; min-height:100px; }
+      background: var(--background, #18191b); padding:22px 12px; margin:12px 0; min-height:180px;
+      display:flex; flex-direction:column; justify-content:flex-start; }
+    #subscriptionManagerPage .sm-banner-viewport[data-position="bottom"] {justify-content:flex-end;}
     #subscriptionManagerPage #sm-b-preview { margin: 0 auto; width: calc(100% - 16px); max-width:800px;
       min-height:58px; box-sizing:border-box; border-radius:10px; border-left:5px solid rgba(255,255,255,.95);
       color:white; display:flex; gap:12px; align-items:center; padding:13px 46px 13px 15px;
@@ -74,7 +76,7 @@
     </nav>
     <section class="sm-panel" id="sm-panel-users">
       <div class="sm-toolbar"><h2>Jellyfin users</h2><div class="sm-inline"><button class="sm-button alt" type="button" id="sm-refresh">Refresh users &amp; billing</button><button class="sm-button alt" type="button" id="sm-sync-statuses">Manually update users' statuses</button></div></div>
-      <p class="sm-hint">Everyone is discovered automatically. Only accounts you explicitly include are managed. Administrators cannot be enrolled. Configure opens that user's editor below the table.</p>
+      <p class="sm-hint">Everyone is discovered automatically. Choosing a plan enrolls a user automatically; clearing the plan disables management. Turning management on with no selected plan assigns the default from Plans. Turning it off retains their previous plan for later. Administrators cannot be enrolled. Configure opens that user's editor below the table.</p>
       <div class="sm-scroll sm-box"><table><thead><tr><th>User</th><th>Managed</th><th>Plan</th><th>Balance</th><th>Paid through</th><th>Status</th><th>Next renewal</th><th>Details</th></tr></thead><tbody id="sm-users"></tbody></table></div>
       <div id="sm-detail" class="sm-box" hidden>
         <div class="sm-toolbar"><h2 id="sm-detail-name">User settings</h2><button class="sm-button alt" id="sm-close-detail" type="button">Close</button></div>
@@ -104,10 +106,14 @@
           <button class="sm-button" type="submit" id="sm-opening-submit">Record initial subscription</button>
         </form>
         <h3>Personalized banner appearance</h3>
-        <form id="sm-user-banner-form"><div class="sm-grid">
-          <div><label for="sm-user-banner-title">Custom title (optional)</label><input id="sm-user-banner-title" maxlength="120" placeholder="Welcome, {name}!" /></div>
-          <div><label for="sm-user-banner-color">User banner color (optional)</label><input id="sm-user-banner-color" placeholder="#3b82f6" pattern="#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?" /></div></div>
-          <p class="sm-hint">Overrides the shared greeting and status color for this user. Template values include {name}, {plan}, {expiration}, {daysLeft}, {renewal} and {balance}.</p>
+        <form id="sm-user-banner-form">
+          <div class="sm-grid">
+            <div><label for="sm-user-banner-title">Custom greeting title (optional)</label><input id="sm-user-banner-title" maxlength="120" placeholder="Welcome back, {name}!" /></div>
+            <div><label for="sm-user-banner-message">Custom active-subscription message (optional)</label><textarea id="sm-user-banner-message" maxlength="250" rows="2" placeholder="Thanks for supporting the server, {name}!"></textarea></div>
+          </div>
+          <label class="sm-switch-row"><input id="sm-user-banner-use-color" type="checkbox" /> Use a custom banner color when this user is active</label>
+          <div class="sm-grid"><div><label for="sm-user-banner-color">Active banner color</label><input id="sm-user-banner-color" type="color" value="#166534" /></div></div>
+          <p class="sm-hint">The custom message and color appear only while the subscription is fully active. Expiring and expired users keep the warning/expiration message and color. The optional greeting title applies to all statuses. Use {name}, {plan}, {expiration}, {daysLeft}, {renewal} and {balance}.</p>
           <button class="sm-button alt" type="submit">Save personal banner</button>
         </form>
       </div>
@@ -135,6 +141,13 @@
           <div class="sm-inline"><button class="sm-button" type="submit">Save plan</button><button class="sm-button alt" type="button" id="sm-plan-new">New plan</button></div>
         </form>
         <p class="sm-hint">Changing a price affects future renewals, not months already paid for. Hiding a plan does not cancel existing subscribers.</p>
+      </div>
+      <div class="sm-box">
+        <form id="sm-default-plan-form" class="sm-grid">
+          <div><label for="sm-default-plan">Default plan when enabling a user</label><select id="sm-default-plan"></select></div>
+          <div><button type="submit" class="sm-button">Save default plan</button></div>
+        </form>
+        <p class="sm-hint">If you turn on subscription management without choosing a plan, this plan is assigned automatically. Selecting a plan in Users also enables that user; selecting “No plan” disables management.</p>
       </div>
       <div class="sm-box sm-scroll"><table><thead><tr><th>Name</th><th>Monthly price</th><th>Available</th><th>Subscribers</th><th></th></tr></thead><tbody id="sm-plans"></tbody></table></div>
     </section>
@@ -177,7 +190,8 @@
               <label><input type="checkbox" id="sm-b-balance" /> Display account credit</label>
               <label><input type="checkbox" id="sm-b-renewal" /> Display next renewal date</label>
               <label><input type="checkbox" id="sm-b-dismiss" /> Allow temporary dismissal</label>
-              <label for="sm-b-position">Screen position</label><select id="sm-b-position"><option value="top">Top, below header</option><option value="bottom">Bottom</option></select>
+              <label for="sm-b-position">Banner position</label><select id="sm-b-position"><option value="top">Top</option><option value="bottom">Bottom</option></select>
+              <p class="sm-hint">Home layout: first or last item on the Home page. Floating layout: top or bottom edge of the screen.</p>
             </div>
           </div>
           <div class="sm-grid">
@@ -202,7 +216,8 @@
         <label for="sm-b-preview-status">Preview subscription status</label>
         <select id="sm-b-preview-status"><option value="active">Active</option><option value="expiring">Expiring soon</option><option value="expired">Expired</option><option value="unmanaged">Unmanaged</option></select>
         <label for="sm-b-preview-user">Preview as</label><select id="sm-b-preview-user"><option value="">Example user</option></select>
-        <div class="sm-banner-viewport"><div id="sm-b-preview" role="status"></div></div>
+        <div class="sm-banner-viewport" id="sm-b-preview-viewport"><div id="sm-b-preview" role="status"></div></div>
+        <div id="sm-b-preview-placement" class="sm-hint"></div>
         <p class="sm-hint">Live preview — updates as you edit colors, messages, icon, and display options. It does not save until you press Save banner settings.</p>
       </div>
     </section>

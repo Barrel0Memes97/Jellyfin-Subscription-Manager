@@ -28,6 +28,14 @@ public sealed class SubscriptionController : ControllerBase
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("plans/default")]
+    public async Task<IActionResult> SetDefaultPlan([FromBody] DefaultPlanRequest req)
+    {
+        try { await _service.SetDefaultPlanAsync(req); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("users/{userId:guid}")]
     public async Task<IActionResult> SetMember(Guid userId, [FromBody] MemberRequest req)
     {

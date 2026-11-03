@@ -143,10 +143,37 @@ const enrollment = calls.find(c => c.url.endsWith('/users/' + id));
 assert.ok(enrollment, 'Enroll toggle did not send a request');
 assert.equal(JSON.parse(enrollment.data).included, true);
 
-// Assigning a user must submit the real plan UUID rather than blank/undefined.
+// A plan selection must enroll the user atomically, while clearing it disables.
 await page.fire('change', { target: { dataset:{plan:id}, value:planId } });
 const assignment = calls.filter(c => c.url.endsWith('/users/' + id)).at(-1);
 assert.equal(JSON.parse(assignment.data).planId, planId);
+assert.equal(JSON.parse(assignment.data).included, true);
+await page.fire('change', { target: { dataset:{plan:id}, value:'' } });
+const cleared = calls.filter(c => c.url.endsWith('/users/' + id)).at(-1);
+assert.equal(JSON.parse(cleared.data).planId, null);
+assert.equal(JSON.parse(cleared.data).included, false);
+
+// Enabling from the checkbox with no selected plan uses the configured default.
+state.defaultPlanId = planId;
+await page.fire('viewshow');
+await new Promise(resolve => setImmediate(resolve));
+get('#plan-picker-' + id).value = '';
+await page.fire('change', { target: {dataset:{enroll:id}, checked:true} });
+const fromDefault = calls.filter(c => c.url.endsWith('/users/' + id)).at(-1);
+assert.equal(JSON.parse(fromDefault.data).included, true);
+assert.equal(JSON.parse(fromDefault.data).planId, planId);
+// A disabled checkbox keeps a previously assigned plan for easy re-enrollment.
+get('#plan-picker-' + id).value = planId;
+await page.fire('change', {target:{dataset:{enroll:id}, checked:false}});
+const unchecked = calls.filter(c => c.url.endsWith('/users/' + id)).at(-1);
+assert.equal(JSON.parse(unchecked.data).included, false);
+assert.equal(JSON.parse(unchecked.data).planId, planId);
+
+// The Plans tab exposes a saveable default plan selector.
+get('#sm-default-plan').value = planId;
+await get('#sm-default-plan-form').fire('submit', {preventDefault(){}});
+const defaultSave = calls.find(c => c.url.endsWith('/plans/default'));
+assert.equal(JSON.parse(defaultSave.data).planId, planId);
 
 // Seerr settings must not leak/clear the existing API key on a blank edit.
 get('#sm-seerr-enabled').checked = true;
@@ -190,9 +217,12 @@ assert.equal(JSON.parse(initial.data).mode, 'credit');
 
 get('#sm-user-banner-title').value = 'Welcome back, {name}!';
 get('#sm-user-banner-color').value = '#4120ff';
+get('#sm-user-banner-use-color').checked = true;
+get('#sm-user-banner-message').value = 'Your special welcome, {name}!';
 await get('#sm-user-banner-form').fire('submit', {preventDefault() {}});
 const personal = calls.find(c => c.url.endsWith('/users/' + id + '/banner'));
 assert.equal(JSON.parse(personal.data).color, '#4120ff');
+assert.equal(JSON.parse(personal.data).message, 'Your special welcome, {name}!');
 
 // Update statuses must NOT make billing charges. It uses overview?recalculate=false.
 await page.fire('click', {target:{closest:()=>({dataset:{},id:'sm-sync-statuses'})}});
@@ -228,6 +258,14 @@ await page.fire('viewshow');
 await new Promise(resolve => setImmediate(resolve));
 assert.match(get('#sm-b-preview').style.background, /linear-gradient/);
 assert.equal(get('#sm-b-title-template').value, 'Welcome, {name}!');
+get('#sm-b-position').value = 'bottom';
+get('#sm-b-layout').value = 'home';
+await get('#sm-banner-form').fire('input', {});
+assert.equal(get('#sm-b-preview-viewport').dataset.position, 'bottom');
+assert.match(get('#sm-b-preview-placement').textContent, /bottom of the content/);
+get('#sm-b-layout').value = 'floating';
+await get('#sm-banner-form').fire('input', {});
+assert.match(get('#sm-b-preview-placement').textContent, /bottom of the screen/);
 
 // Repeated controller setup on the same DOM node should not multiply callbacks.
 const before = page.listeners.click.length;

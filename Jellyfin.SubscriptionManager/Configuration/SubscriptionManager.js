@@ -45,6 +45,7 @@ export default function SubscriptionManagerController(page) {
         billingCycle:field(u,'billingCycle') ?? 'legacy', openingRecorded:bool(field(u,'openingRecorded')),
         coverageStartsOn:field(u,'coverageStartsOn') ?? null,
         bannerTitle:field(u,'bannerTitle') ?? '', bannerColor:field(u,'bannerColor') ?? '',
+        bannerMessage:field(u,'bannerMessage') ?? '',
         status:field(u, 'status') ?? 'unknown'
       }));
       const ledger = (field(raw, 'ledger') || []).map(t => ({ ...t,
@@ -58,7 +59,8 @@ export default function SubscriptionManagerController(page) {
         enrolledCount:field(raw, 'enrolledCount') ?? 0,
         totalCollectedCents:field(raw, 'totalCollectedCents') ?? 0,
         totalBalanceCents:field(raw, 'totalBalanceCents') ?? 0,
-        timeZoneId:field(raw, 'timeZoneId') ?? 'UTC', banner:field(raw, 'banner') ?? null,
+        timeZoneId:field(raw, 'timeZoneId') ?? 'UTC',
+        defaultPlanId:guid(field(raw, 'defaultPlanId')), banner:field(raw, 'banner') ?? null,
         seerr:field(raw, 'seerr') ?? null };
     }
     const userById = id => state?.users.find(u => u.userId === guid(id));
@@ -91,7 +93,7 @@ export default function SubscriptionManagerController(page) {
       showTab('plans');
       $('#sm-plan-form').scrollIntoView?.({ behavior:'smooth', block:'start' });
     }
-    const optionsForPlans = (selected) => '<option value="">Select a plan...</option>' + (state?.plans || [])
+    const optionsForPlans = (selected) => '<option value="">No plan (disable management)...</option>' + (state?.plans || [])
       .filter(p => p.enabled || p.id === selected).map(p => `<option value="${p.id}" ${selected === p.id ? 'selected' : ''}>${escapeHtml(p.name)} (${usd(p.monthlyCents)}/mo)</option>`).join('');
     const usersOptions = (selected, includeAll) => (includeAll ? '<option value="">All users</option>' : '<option value="">Select a user...</option>') + state.users
       .filter(u => !u.administrator).map(u => `<option value="${u.userId}" ${u.userId === selected ? 'selected' : ''}>${escapeHtml(u.name)}</option>`).join('');
@@ -115,8 +117,11 @@ export default function SubscriptionManagerController(page) {
         <td>${escapeHtml(u.included ? (u.nextChargeOn || 'Not scheduled') : '—')}</td>
         <td>${u.administrator ? '—' : `<button class="sm-button alt" type="button" data-details="${u.userId}">Configure</button>`}</td>
       </tr>`).join('');
+      // The default is persisted separately; editing a plan must not overwrite it.
+      $('#sm-default-plan').innerHTML = '<option value="">Choose a default plan...</option>' + state.plans
+        .filter(p => p.enabled).map(p => `<option value="${p.id}" ${p.id === state.defaultPlanId ? 'selected' : ''}>${escapeHtml(p.name)} (${usd(p.monthlyCents)}/mo)</option>`).join('');
       $('#sm-plans').innerHTML = state.plans.map(p => `<tr>
-        <td><strong>${escapeHtml(p.name)}</strong><div class="sm-hint sm-plan-description">${escapeHtml(p.description)}</div></td>
+        <td><strong>${escapeHtml(p.name)}</strong>${p.id === state.defaultPlanId ? ' <small>(Default)</small>' : ''}<div class="sm-hint sm-plan-description">${escapeHtml(p.description)}</div></td>
         <td>${usd(p.monthlyCents)}</td>
         <td>${p.enabled ? 'Yes' : 'Hidden'}</td>
         <td>${state.users.filter(u => u.included && u.planId === p.id).length}</td>
@@ -165,7 +170,11 @@ export default function SubscriptionManagerController(page) {
       $('#sm-detail-expiry').value = u.paidThrough || '';
       $('#sm-detail-cycle').value = u.billingCycle || 'legacy';
       $('#sm-user-banner-title').value = u.bannerTitle || '';
-      $('#sm-user-banner-color').value = u.bannerColor || '';
+      $('#sm-user-banner-message').value = u.bannerMessage || '';
+      const customActiveColor = /^#[0-9a-f]{6}$/i.test(u.bannerColor || '');
+      $('#sm-user-banner-use-color').checked = customActiveColor;
+      $('#sm-user-banner-color').value = customActiveColor ? u.bannerColor : '#166534';
+      $('#sm-user-banner-color').disabled = !customActiveColor;
       $('#sm-opening-submit').disabled = u.openingRecorded;
       $('#sm-opening-submit').textContent = u.openingRecorded ? 'Initial setup already recorded' : 'Record initial subscription';
       if (!$('#sm-opening-start').value) $('#sm-opening-start').value = state.today || '';
@@ -222,10 +231,23 @@ export default function SubscriptionManagerController(page) {
         renewal:user?.nextChargeOn || '2027-02-27', balance:usd(user?.balanceCents ?? 1000) };
       const base = ({active:b.activeColor, expiring:b.expiringColor, expired:b.expiredColor,
         unmanaged:b.unmanagedColor})[status] || '#374151';
-      const color = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(user?.bannerColor || '') ? user.bannerColor : base;
-      const message = ({active:b.activeText, expiring:b.expiringText, expired:b.expiredText,
-        unmanaged:b.unmanagedText})[status] || 'Subscription';
-      const title = user?.bannerTitle || b.titleTemplate || 'Welcome, {name}!';
+      // Preview unsaved personal settings for the currently configured user.
+      const editingUser = user && user.userId === selectedUser && !$('#sm-detail').hidden;
+      const personalColor = editingUser
+        ? ($('#sm-user-banner-use-color').checked ? $('#sm-user-banner-color').value : '')
+        : user?.bannerColor;
+      const personalMessage = editingUser ? $('#sm-user-banner-message').value : user?.bannerMessage;
+      const personalTitle = editingUser ? $('#sm-user-banner-title').value : user?.bannerTitle;
+      const color = status === 'active' && /^#[0-9a-f]{6}$/i.test(personalColor || '') ? personalColor : base;
+      const message = status === 'active' && (personalMessage || '').trim()
+        ? personalMessage
+        : (({active:b.activeText, expiring:b.expiringText, expired:b.expiredText,
+          unmanaged:b.unmanagedText})[status] || 'Subscription');
+      const title = personalTitle || b.titleTemplate || 'Welcome, {name}!';
+      $('#sm-b-preview-viewport').dataset.position = b.position === 'bottom' ? 'bottom' : 'top';
+      $('#sm-b-preview-placement').textContent = b.layout === 'floating'
+        ? `Floating banner at the ${b.position === 'bottom' ? 'bottom' : 'top'} of the screen`
+        : `Home page banner at the ${b.position === 'bottom' ? 'bottom' : 'top'} of the content`;
       const el = $('#sm-b-preview');
       el.style.background = b.gradient ? `linear-gradient(110deg, ${color}, rgba(25,25,30,.95))` : color;
       el.style.borderLeftColor = '#fff';
@@ -352,7 +374,8 @@ export default function SubscriptionManagerController(page) {
       if (target.id === 'sm-save-plan' && selectedUser) {
         const u = userById(selectedUser);
         const planId = $('#sm-detail-plan').value || null;
-        try { await invoke('users/' + selectedUser, { included: u.included, planId }, 'User plan saved.'); } catch (_) { }
+        try { await invoke('users/' + selectedUser, { included: !!planId, planId },
+          planId ? 'Plan assigned and subscription management enabled.' : 'Plan cleared and subscription management disabled.'); } catch (_) { }
       }
       if (target.id === 'sm-sync-statuses') {
         try {
@@ -389,13 +412,22 @@ export default function SubscriptionManagerController(page) {
       const t = ev.target;
       if (t.dataset.enroll) {
         const u = userById(t.dataset.enroll);
-        const planId = page.querySelector(`[data-plan="${u.userId}"]`).value || null;
-        try { await invoke('users/' + u.userId, { included: t.checked, planId }, 'User subscription updated.'); }
-        catch (_) { t.checked = !t.checked; }
+        if (!u) return;
+        // Enabling with an empty dropdown uses the configured default. Turning
+        // management off retains the assigned plan so re-enrollment is easy.
+        const planId = page.querySelector(`[data-plan="${u.userId}"]`).value ||
+          (t.checked ? state.defaultPlanId : null);
+        try { await invoke('users/' + u.userId, { included: t.checked, planId },
+          t.checked ? 'Subscription management enabled.' : 'Subscription management disabled.'); }
+        catch (_) { t.checked = u.included; }
       }
       if (t.dataset.plan) {
         const u = userById(t.dataset.plan);
-        try { await invoke('users/' + u.userId, { included: u.included, planId: t.value || null }, 'Plan assignment saved.'); }
+        if (!u) return;
+        // Selecting a plan enrolls immediately; clearing it disables management.
+        const planId = t.value || null;
+        try { await invoke('users/' + u.userId, { included: !!planId, planId },
+          planId ? 'Plan assigned and subscription management enabled.' : 'Plan removed and subscription management disabled.'); }
         catch (_) { t.value = u.planId || ''; }
       }
       if (t.id === 'sm-pay-user') updatePayBalance();
@@ -403,6 +435,11 @@ export default function SubscriptionManagerController(page) {
       if (t.id === 'sm-pay-mode') { $('#sm-pay-amount').min = t.value === 'adjustments' ? '-1000000' : '0.01'; }
       if (t.id === 'sm-opening-credit-toggle') previewOpening();
       if (t.id === 'sm-b-preview-user') previewBanner();
+    });
+    $('#sm-default-plan-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try { await invoke('plans/default', {planId:$('#sm-default-plan').value || null},
+        'Default plan saved for future enrollments.'); } catch (_) { }
     });
     $('#sm-plan-form').addEventListener('submit', async ev => {
       ev.preventDefault();
@@ -460,9 +497,16 @@ export default function SubscriptionManagerController(page) {
       ev.preventDefault();
       if (!selectedUser) return;
       try { await invoke('users/' + selectedUser + '/banner', {
-        title:$('#sm-user-banner-title').value, color:$('#sm-user-banner-color').value
+        title:$('#sm-user-banner-title').value,
+        message:$('#sm-user-banner-message').value,
+        color:$('#sm-user-banner-use-color').checked ? $('#sm-user-banner-color').value : ''
       }, 'Personal banner saved.'); } catch (_) { }
     });
+    $('#sm-user-banner-use-color').addEventListener('change', () => {
+      $('#sm-user-banner-color').disabled = !$('#sm-user-banner-use-color').checked;
+      previewBanner();
+    });
+    $('#sm-user-banner-form').addEventListener('input', previewBanner);
     $('#sm-settings-form').addEventListener('submit', async ev => {
       ev.preventDefault();
       try { await invoke('settings', { timeZoneId: $('#sm-timezone').value.trim() }, 'Billing time zone saved.'); } catch (_) { }
@@ -496,6 +540,7 @@ export default function SubscriptionManagerController(page) {
       catch (_) { }
     });
     $('#sm-banner-form').addEventListener('input', previewBanner);
+    $('#sm-banner-form').addEventListener('change', previewBanner);
     $('#sm-b-preview-status').addEventListener('change', previewBanner);
     $('#sm-b-preview-user').addEventListener('change', previewBanner);
     // Jellyfin 12 fires viewshow every time a page is presented. The legacy

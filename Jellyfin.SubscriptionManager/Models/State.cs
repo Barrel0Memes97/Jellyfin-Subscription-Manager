@@ -7,6 +7,8 @@ public sealed class SubscriptionState
     public string TimeZoneId { get; set; } = "UTC";
     public BannerSettings Banner { get; set; } = new();
     public SeerrSettings Seerr { get; set; } = new();
+    // The plan used when an administrator enrolls a user without first choosing one.
+    public Guid? DefaultPlanId { get; set; }
     public List<Plan> Plans { get; set; } = new();
     public List<Membership> Memberships { get; set; } = new();
     public List<LedgerEntry> Ledger { get; set; } = new();
@@ -65,7 +67,9 @@ public sealed class Membership
     public DateOnly? CoverageStartsOn { get; set; }
     public bool OpeningRecorded { get; set; }
     public string BannerTitle { get; set; } = string.Empty;
+    // Optional active-only appearance overrides. Expiry warnings keep their global text/color.
     public string BannerColor { get; set; } = string.Empty;
+    public string BannerMessage { get; set; } = string.Empty;
     public List<ScheduleSnapshot> OriginalSchedules { get; set; } = new();
     public bool OriginalSchedulesCaptured { get; set; }
     public bool RestorePending { get; set; }
@@ -108,6 +112,8 @@ public sealed record PlanRequest(
     [property: JsonPropertyName("description")] string? Description,
     [property: JsonPropertyName("jellyfinPermissions")] PlanJellyfinPermissions? JellyfinPermissions,
     [property: JsonPropertyName("seerrRequestAccess")] string? SeerrRequestAccess);
+public sealed record DefaultPlanRequest(
+    [property: JsonPropertyName("planId")] Guid? PlanId);
 public sealed record MemberRequest(
     [property: JsonPropertyName("included")] bool Included,
     [property: JsonPropertyName("planId")] Guid? PlanId);
@@ -117,7 +123,7 @@ public sealed record PaidThroughRequest(DateOnly? PaidThrough, string? Note);
 public sealed record SettingsRequest(string TimeZoneId);
 public sealed record BillingCycleRequest(string Cycle);
 public sealed record RefundRequest(string? Note);
-public sealed record UserBannerRequest(string? Title, string? Color);
+public sealed record UserBannerRequest(string? Title, string? Color, string? Message);
 public sealed record OpeningRequest(
     string Mode, DateOnly StartDate, DateOnly? PaidThrough,
     long FirstPaymentCents, long StartingCreditCents, string? Note);

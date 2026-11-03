@@ -113,8 +113,16 @@
     if (!onHome()) { remove(); return; }
     const target = homeNode();
     if (!target) { remove(); return; }
-    if (bannerElement.parentElement !== target || target.firstElementChild !== bannerElement) {
-      target.prepend(bannerElement);
+    // Position applies to inline Home cards as well as floating notifications.
+    // Jellyfin can insert new rows after the banner: re-check its position on
+    // later home renders without creating a second node or fetching again.
+    const bottom = field(data.appearance || {}, 'position') === 'bottom';
+    const correctlyPlaced = bottom
+      ? target.lastElementChild === bannerElement
+      : target.firstElementChild === bannerElement;
+    if (bannerElement.parentElement !== target || !correctlyPlaced) {
+      if (bottom) target.appendChild(bannerElement);
+      else target.prepend(bannerElement);
     }
   }
 
@@ -136,9 +144,14 @@
     const colors = {active:field(a,'activeColor'),expiring:field(a,'expiringColor'),
       expired:field(a,'expiredColor'),unmanaged:field(a,'unmanagedColor')};
     const base = colors[data.status] || '#3b82f6';
-    const color = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(data.customColor || '') ? data.customColor : base;
-    const message = {active:field(a,'activeText'),expiring:field(a,'expiringText'),
-      expired:field(a,'expiredText'),unmanaged:field(a,'unmanagedText')}[data.status] || 'Subscription information';
+    // Personal colors and messages apply only to fully active subscriptions.
+    // Warning and expired notices must remain distinguishable and informative.
+    const color = data.status === 'active' && /^#[0-9a-f]{6}$/i.test(data.customColor || '')
+      ? data.customColor : base;
+    const message = data.status === 'active' && (data.customMessage || '').trim()
+      ? data.customMessage
+      : ({active:field(a,'activeText'),expiring:field(a,'expiringText'),
+        expired:field(a,'expiredText'),unmanaged:field(a,'unmanagedText')}[data.status] || 'Subscription information');
     const values = {
       name:data.userName || 'Subscriber',plan:data.plan || '—',status:data.status,
       expiration:data.paidThrough || '—',daysLeft:data.daysRemaining ?? '—',
@@ -153,6 +166,11 @@
     const banner = bannerElement;
     banner.className = floating ? 'jf-floating' : '';
     banner.dataset.position = field(a,'position') === 'bottom' ? 'bottom' : 'top';
+    // Clear the other edge explicitly so updates never inherit stale placement.
+    banner.style.top = floating && banner.dataset.position === 'top'
+      ? 'max(72px, env(safe-area-inset-top))' : '';
+    banner.style.bottom = floating && banner.dataset.position === 'bottom'
+      ? 'max(16px, env(safe-area-inset-bottom))' : '';
     banner.style.opacity = '1';
     banner.style.transform = floating ? 'translateX(-50%)' : 'none';
     banner.style.background = field(a,'gradient') !== false

@@ -71,8 +71,10 @@ public sealed partial class SubscriptionService
     {
         var title = (request.Title ?? string.Empty).Trim();
         var color = (request.Color ?? string.Empty).Trim();
-        if (title.Length > 120 || (color.Length > 0 && !Regex.IsMatch(color, "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")))
-            throw new ArgumentException("Custom title must be <=120 characters and color must be #RRGGBB");
+        var message = (request.Message ?? string.Empty).Trim();
+        if (title.Length > 120 || message.Length > 250 ||
+            (color.Length > 0 && !Regex.IsMatch(color, "^#[0-9a-fA-F]{6}$")))
+            throw new ArgumentException("Custom title must be 120 characters or fewer, active message 250 or fewer, and color #RRGGBB");
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -80,6 +82,7 @@ public sealed partial class SubscriptionService
             var member = GetMember(userId);
             member.BannerTitle = title;
             member.BannerColor = color;
+            member.BannerMessage = message;
             Save();
         }
         finally { _gate.Release(); }
