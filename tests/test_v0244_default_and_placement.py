@@ -20,11 +20,12 @@ class DefaultPlanAndBannerPlacement(unittest.TestCase):
     def test_top_anchor_is_above_hero_not_inside_rows(self):
         js=(WEB/'banner.js').read_text()
         self.assertIn('function homeTopPlacement()',js)
-        self.assertIn('#slides-container',js)
+        self.assertIn('function homeTopPlacement()',js)
+        self.assertIn('return {target: tab.parentElement, before: tab}',js)
         self.assertIn('target.insertBefore(bannerElement, before)',js)
         self.assertIn('target.prepend(bannerElement)',js)
         self.assertIn('target.appendChild(bannerElement)',js)
         self.assertIn('const tab = activeHomeTab()',js)
-        self.assertIn('return { target: tab, before: null }',js)
+        self.assertIn('if (!hasHomeRoute()) { remove(); return; }',js)
 
 if __name__ == '__main__': unittest.main()

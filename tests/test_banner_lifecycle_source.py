@@ -13,12 +13,13 @@ PROJECT = (ROOT / 'Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csp
 
 class BannerLifecycleTests(unittest.TestCase):
     def test_version_and_automatic_cache_busting(self):
-        self.assertIn('<Version>0.2.4.4</Version>', PROJECT)
+        self.assertIn('<Version>0.2.4.5</Version>', PROJECT)
         self.assertIn('Assembly.GetName().Version', MIDDLEWARE)
         self.assertIn('banner.js?v={version}', MIDDLEWARE)
 
     def test_observe_nested_home_render_not_only_body_children(self):
-        self.assertRegex(BANNER, r'observer\.observe\(document\.body,\s*\{childList:true,\s*subtree:true\}\)')
+        self.assertIn('childList:true, subtree:true, attributes:true', BANNER)
+        self.assertIn("attributeFilter:['class', 'style', 'hidden', 'aria-hidden']", BANNER)
         self.assertIn('const observer = new MutationObserver', BANNER)
         self.assertIn('queueMount();', BANNER)
         self.assertIn("document.addEventListener('HISTORY_UPDATE'", BANNER)

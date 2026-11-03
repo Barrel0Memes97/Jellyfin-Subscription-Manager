@@ -30,7 +30,7 @@ with sync_playwright() as pw:
         page.evaluate('''() => {
           location.hash = '/home';
           Object.defineProperty(document, 'currentScript', {
-             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.4'})
+             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.5'})
           });
           window.bannerRequests = 0;
           window.userId = 'alice';
@@ -47,10 +47,10 @@ with sync_playwright() as pw:
         page.locator(PANEL).wait_for(timeout=3000)
         check(page.locator(PANEL).count() == 1, 'Banner mounts once on initial Home route')
         check('Welcome, Alice!' in page.locator(PANEL).inner_text(), 'Correct user name is shown')
-        check(page.evaluate('''() => document.querySelector('#homeTab').firstElementChild.id''') == PANEL.lstrip("#"),
-              'Top position places the banner immediately under the Home navigation')
-        check(page.evaluate('''() => document.querySelector('#homeTab').firstElementChild.nextElementSibling.id''') == 'slides-container',
-              'Top position places the banner directly ABOVE the Media Bar')
+        check(page.evaluate('''() => document.querySelector('#homeTab').previousElementSibling.id''') == PANEL.lstrip("#"),
+              'Top position keeps the banner under navigation, outside the rendered Home tab')
+        check(page.evaluate('''() => document.querySelector('#jf-personalized-user-banner').nextElementSibling.id''') == 'homeTab',
+              'Top position places the banner immediately BEFORE the Home tab and its Media Bar')
         check(page.evaluate('''() => document.getElementById('jf-app-header').compareDocumentPosition(document.getElementById('jf-personalized-user-banner')) & Node.DOCUMENT_POSITION_FOLLOWING''') != 0,
               'Jellyfin top menu stays above the banner')
 
@@ -105,8 +105,8 @@ with sync_playwright() as pw:
           document.dispatchEvent(new Event('visibilitychange'));
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('#homeTab').firstElementChild.id''') == PANEL.lstrip("#"),
-              'Switching back to inline top restores the media-bar-above placement')
+        check(page.evaluate('''() => document.querySelector('#homeTab').previousElementSibling.id''') == PANEL.lstrip("#"),
+              'Switching back to inline top restores stable placement above the Home tab')
 
         # Media Bar plugins may insert their hero after the subscription banner is loaded.
         page.evaluate('''() => {
@@ -117,8 +117,48 @@ with sync_playwright() as pw:
           document.querySelector('#homeTab').append(bar);
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('#jf-personalized-user-banner').nextElementSibling.id''') == 'slides-container',
-              'Late-added media bar stays directly after the banner')
+        check(page.evaluate('''() => document.querySelector('#jf-personalized-user-banner').nextElementSibling.id''') == 'homeTab',
+              'Late-added media bar stays below the banner without moving its anchor')
+
+        # Reproduce the Top-only regression: Media Bar replaces its internal
+        # wrapper many times while fetching/rendering slides. The banner must
+        # NEVER be moved into that wrapper or disconnected in the process.
+        page.evaluate('''() => {
+          const tab = document.querySelector('#homeTab');
+          const media = tab.querySelector('#slides-container');
+          const wrapper = document.createElement('section');
+          wrapper.className = 'media-bar-react-wrapper';
+          media.replaceWith(wrapper);
+          wrapper.appendChild(media);
+          window.stableBannerNode = document.querySelector('#jf-personalized-user-banner');
+          window.bannerWasDisconnected = false;
+          window.bannerWasInsideHome = false;
+          window.bannerTrackedChanges = 0;
+          const check = () => {
+            const banner = window.stableBannerNode;
+            if (!banner.isConnected) window.bannerWasDisconnected = true;
+            if (tab.contains(banner)) window.bannerWasInsideHome = true;
+          };
+          window.mediaBarSimulator = setInterval(() => {
+            const hero = tab.querySelector('.media-bar-react-wrapper');
+            if (hero) {
+              const next = hero.cloneNode(true);
+              hero.replaceWith(next);
+            }
+            window.bannerTrackedChanges++;
+            check();
+          }, 20);
+          window.testBannerObserver = new MutationObserver(check);
+          window.testBannerObserver.observe(document.body, {childList:true, subtree:true});
+        }''')
+        page.wait_for_timeout(700)
+        page.evaluate('''() => {clearInterval(window.mediaBarSimulator); window.testBannerObserver.disconnect();}''')
+        check(page.evaluate('bannerTrackedChanges') >= 20,
+              'Simulated Media Bar repeatedly replacing its internal React wrapper')
+        check(page.evaluate('!bannerWasDisconnected && !bannerWasInsideHome'),
+              'Top banner stays continuously attached OUTSIDE the replaced Media Bar subtree')
+        check(page.evaluate('stableBannerNode === document.querySelector("#jf-personalized-user-banner")'),
+              'Repeated Media Bar redraws preserve the same banner element')
 
         # React-like replacement of home content, without touching body immediate child list.
         requests_before_remount = page.evaluate('bannerRequests')

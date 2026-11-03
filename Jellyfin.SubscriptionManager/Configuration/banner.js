@@ -57,40 +57,38 @@
     return [...nodes].find(visiblyPresent) || null;
   }
 
-  // The original jellyfin-banner.js prepended to .homePageMain (or .homePage),
-  // NOT to .homeSectionsContainer. Sections follow the Media Bar/hero, so
-  // prepending inside sections incorrectly puts the banner BELOW the hero.
-  // Jellyfin 12 and Media Bar also use #homeTab > #slides-container. When the
-  // hero exists, insert the banner immediately before it in the same parent.
-  // This puts the banner below Jellyfin's header and above the media slideshow.
+  // The slideshow can replace its own parent or the contents of #homeTab
+  // while loading slides. Inserting inside either tree caused our TOP banner
+  // to be removed with those nodes and repeatedly reattached (visible flash).
+  // Instead, mount as a SIBLING immediately BEFORE the active Home tab. This
+  // still puts it below Jellyfin's navigation and above the media slideshow,
+  // but keeps the banner outside React/Media Bar's frequently replaced tree.
   function homeTopPlacement() {
     const tab = activeHomeTab();
-    const root = tab || [...document.querySelectorAll(
+    if (tab?.parentElement) {
+      return {target: tab.parentElement, before: tab};
+    }
+    // Avoid jumping to a fallback container while an existing Home tab is
+    // temporarily hidden during a route/CSS transition. Keep its last anchor.
+    if (document.querySelector('#homeTab')) return null;
+    // Legacy web layouts use homePageMain/homePage rather than #homeTab.
+    const root = [...document.querySelectorAll(
       '#indexPage .homePageMain, .homePageMain, #indexPage .homePage, .homePage')]
       .find(visiblyPresent);
     if (!root) return null;
-    const media = root.querySelector(
-      '#slides-container, #mediaBar, #media-bar, .mediaBar, .media-bar, .slideshow-container');
-    if (media && visiblyPresent(media) && media.parentElement && root.contains(media.parentElement)) {
-      return { target: media.parentElement, before: media };
-    }
-    if (tab) {
-      // On Jellyfin 12, #homeTab itself is below the application menu bar.
-      // Inserting before its sections also handles heroes added later.
-      return { target: tab, before: null };
-    }
-    return { target: root, before: null };
+    if (root.parentElement) return {target: root.parentElement, before: root};
+    return {target: root, before: root.firstElementChild};
   }
 
-  function onHome() {
+  function hasHomeRoute() {
     const route = (location.hash || '').replace(/^#\/?/, '/').toLowerCase();
     if (route && !/^\/(?:home(?:\.html)?|index(?:\.html)?)(?:[/?#]|$)/.test(route)) return false;
     const pathname = location.pathname.toLowerCase();
-    if (!route && !/(?:\/home(?:\.html)?|\/index(?:\.html)?|\/web\/?)$/.test(pathname)) {
-      // Browser history routing in Jellyfin 12 can use /home without a hash.
-      return false;
-    }
-    return !!homeNode();
+    return !!route || /(?:\/home(?:\.html)?|\/index(?:\.html)?|\/web\/?)$/.test(pathname);
+  }
+
+  function onHome() {
+    return hasHomeRoute() && !!homeNode();
   }
 
   function remove() {
@@ -139,19 +137,22 @@
       if (bannerElement.parentElement !== document.body) document.body.appendChild(bannerElement);
       return;
     }
-    if (!onHome()) { remove(); return; }
+    if (!hasHomeRoute()) { remove(); return; }
+    // Home tabs can be temporarily invisible while React replaces their
+    // children. Keep the last good banner mounted until a new anchor appears,
+    // rather than removing it just because the tab momentarily went missing.
     const bottom = field(data.appearance || {}, 'position') === 'bottom';
     if (bottom) {
       // Bottom intentionally follows every home section, not just the hero.
       const target = homeNode();
-      if (!target) { remove(); return; }
+      if (!target) return;
       if (bannerElement.parentElement !== target || target.lastElementChild !== bannerElement) {
         target.appendChild(bannerElement);
       }
       return;
     }
     const placement = homeTopPlacement();
-    if (!placement) { remove(); return; }
+    if (!placement) return;
     const { target, before } = placement;
     if (before) {
       if (bannerElement.parentElement !== target || bannerElement.nextElementSibling !== before) {
@@ -275,12 +276,22 @@
 
   function start() {
     if (document.body) {
-      const observer = new MutationObserver(() => {
-        // Jellyfin 12 replaces nested homepage nodes without touching body's
-        // immediate child list. No new HTTP request is needed to remount.
-        if (!document.hidden && lastData) queueMount();
+      const observer = new MutationObserver(mutations => {
+        // Jellyfin 12 replaces nested Home content. Listen for those changes
+        // and for visibility changes on page/tab containers. Ignore animated
+        // style changes inside individual Media Bar slides: they can fire on
+        // every frame and must not cause continual banner re-placement.
+        if (document.hidden || !lastData) return;
+        if (mutations.some(change => change.type === 'childList' ||
+            change.target?.matches?.(
+              '#homeTab, #indexPage, .tabContent, .pageTabContent, .homePage, .homePageMain, .mainAnimatedPage, .pageContainer'))) {
+          queueMount();
+        }
       });
-      observer.observe(document.body, {childList:true, subtree:true});
+      observer.observe(document.body, {
+        childList:true, subtree:true, attributes:true,
+        attributeFilter:['class', 'style', 'hidden', 'aria-hidden']
+      });
     }
     const onNavigation = () => { queueMount(); refresh(); };
     window.addEventListener('hashchange', onNavigation);
