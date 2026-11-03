@@ -582,9 +582,11 @@ public sealed partial class SubscriptionService
             var m = _state.Memberships.FirstOrDefault(x => x.UserId == userId);
             var plan = _state.Plans.FirstOrDefault(p => p.Id == m?.PlanId);
             var enrolled = m?.Included == true;
+            // The active check implies paid-through coverage, but the compiler cannot
+            // infer that invariant through IsActive. Pattern-match the date explicitly.
             var status = !enrolled || admin ? "unmanaged" :
-                IsActive(m!, today)
-                    ? (m.PaidThrough.Value.DayNumber - today.DayNumber <= b.WarningDays ? "expiring" : "active")
+                m is not null && IsActive(m, today) && m.PaidThrough is { } paidThrough
+                    ? (paidThrough.DayNumber - today.DayNumber <= b.WarningDays ? "expiring" : "active")
                     : "expired";
             var show = b.Enabled && !HasGrantedPermission(user, PermissionKind.IsDisabled) &&
                 (admin ? b.ShowAdmins : status switch
