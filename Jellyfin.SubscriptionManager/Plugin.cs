@@ -24,6 +24,13 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             DisplayName = "Subscription Manager",
             EnableInMainMenu = true,
             EmbeddedResourcePath = "Jellyfin.Plugin.SubscriptionManager.Configuration.config.html"
+        },
+        // Served by Jellyfin at /web/ConfigurationPage?name=SubscriptionManager.js.
+        // The data-controller attribute loads it as an ES module for each page instance.
+        new PluginPageInfo
+        {
+            Name = "SubscriptionManager.js",
+            EmbeddedResourcePath = "Jellyfin.Plugin.SubscriptionManager.Configuration.SubscriptionManager.js"
         }
     };
 }

@@ -16,13 +16,16 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Verify .NET SDK
         run: dotnet --info
       - name: Restore
         run: dotnet restore Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csproj
       - name: Compile plugin
         run: dotnet build Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csproj -c Release --no-restore
-      - name: Validate release manifest generator
+      - name: Run manifest, API-compatibility, and admin UI tests
         run: python3 -m unittest discover -s tests -v
       - name: Upload DLL for testing
         uses: actions/upload-artifact@v4

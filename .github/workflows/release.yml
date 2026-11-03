@@ -25,6 +25,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Validate release tag
         id: version
         shell: bash
@@ -43,6 +46,9 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Run regression checks
+        run: python3 -m unittest discover -s tests -v
 
       - name: Restore and publish
         run: |
