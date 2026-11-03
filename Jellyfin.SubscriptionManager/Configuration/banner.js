@@ -40,17 +40,46 @@
     return [...document.querySelectorAll('.loginPage, #loginPage')].some(visiblyPresent);
   }
 
-  function homeNode() {
+  function activeHomeTab() {
     const tab = [...document.querySelectorAll('#homeTab')].find(visiblyPresent);
-    if (tab) {
-      // When Favorites or another native tab is active, don't show Home's banner.
-      const siblings = tab.parentElement?.querySelectorAll('.tabContent.is-active, .pageTabContent.is-active') || [];
-      if (siblings.length && !tab.classList.contains('is-active')) return null;
-      return tab.querySelector('.homeSectionsContainer') || tab;
-    }
+    if (!tab) return null;
+    // Jellyfin can cache Home while another native tab is selected.
+    const siblings = tab.parentElement?.querySelectorAll('.tabContent.is-active, .pageTabContent.is-active') || [];
+    if (siblings.length && !tab.classList.contains('is-active')) return null;
+    return tab;
+  }
+
+  function homeNode() {
+    const tab = activeHomeTab();
+    if (tab) return tab.querySelector('.homeSectionsContainer') || tab;
     const nodes = document.querySelectorAll(
       '#indexPage .homeSectionsContainer, #indexPage .homePageMain, .homePageMain, .homePage, .homeSectionsContainer');
     return [...nodes].find(visiblyPresent) || null;
+  }
+
+  // The original jellyfin-banner.js prepended to .homePageMain (or .homePage),
+  // NOT to .homeSectionsContainer. Sections follow the Media Bar/hero, so
+  // prepending inside sections incorrectly puts the banner BELOW the hero.
+  // Jellyfin 12 and Media Bar also use #homeTab > #slides-container. When the
+  // hero exists, insert the banner immediately before it in the same parent.
+  // This puts the banner below Jellyfin's header and above the media slideshow.
+  function homeTopPlacement() {
+    const tab = activeHomeTab();
+    const root = tab || [...document.querySelectorAll(
+      '#indexPage .homePageMain, .homePageMain, #indexPage .homePage, .homePage')]
+      .find(visiblyPresent);
+    if (!root) return null;
+    const media = root.querySelector(
+      '#slides-container, #mediaBar, #media-bar, .mediaBar, .media-bar, .slideshow-container');
+    if (media && visiblyPresent(media) && media.parentElement && root.contains(media.parentElement)) {
+      return { target: media.parentElement, before: media };
+    }
+    if (tab) {
+      // On Jellyfin 12, #homeTab itself is below the application menu bar.
+      // Inserting before its sections also handles heroes added later.
+      return { target: tab, before: null };
+    }
+    return { target: root, before: null };
   }
 
   function onHome() {
@@ -111,18 +140,25 @@
       return;
     }
     if (!onHome()) { remove(); return; }
-    const target = homeNode();
-    if (!target) { remove(); return; }
-    // Position applies to inline Home cards as well as floating notifications.
-    // Jellyfin can insert new rows after the banner: re-check its position on
-    // later home renders without creating a second node or fetching again.
     const bottom = field(data.appearance || {}, 'position') === 'bottom';
-    const correctlyPlaced = bottom
-      ? target.lastElementChild === bannerElement
-      : target.firstElementChild === bannerElement;
-    if (bannerElement.parentElement !== target || !correctlyPlaced) {
-      if (bottom) target.appendChild(bannerElement);
-      else target.prepend(bannerElement);
+    if (bottom) {
+      // Bottom intentionally follows every home section, not just the hero.
+      const target = homeNode();
+      if (!target) { remove(); return; }
+      if (bannerElement.parentElement !== target || target.lastElementChild !== bannerElement) {
+        target.appendChild(bannerElement);
+      }
+      return;
+    }
+    const placement = homeTopPlacement();
+    if (!placement) { remove(); return; }
+    const { target, before } = placement;
+    if (before) {
+      if (bannerElement.parentElement !== target || bannerElement.nextElementSibling !== before) {
+        target.insertBefore(bannerElement, before);
+      }
+    } else if (bannerElement.parentElement !== target || target.firstElementChild !== bannerElement) {
+      target.prepend(bannerElement);
     }
   }
 

@@ -21,14 +21,16 @@ with sync_playwright() as pw:
     try:
         page = browser.new_page()
         page.set_content('''<html><head></head><body>
+            <header id="jf-app-header">Jellyfin top navigation</header>
             <main id="indexPage"><div id="homeTab" class="tabContent is-active">
+              <div id="slides-container">Media Bar slideshow</div>
               <div class="homeSectionsContainer"><div>Movie rows</div></div>
             </div></main>
         </body></html>''')
         page.evaluate('''() => {
           location.hash = '/home';
           Object.defineProperty(document, 'currentScript', {
-             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.3'})
+             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.4'})
           });
           window.bannerRequests = 0;
           window.userId = 'alice';
@@ -45,8 +47,12 @@ with sync_playwright() as pw:
         page.locator(PANEL).wait_for(timeout=3000)
         check(page.locator(PANEL).count() == 1, 'Banner mounts once on initial Home route')
         check('Welcome, Alice!' in page.locator(PANEL).inner_text(), 'Correct user name is shown')
-        check(page.evaluate('''() => document.querySelector('.homeSectionsContainer').firstElementChild.id''') == PANEL.lstrip("#"),
-              'Top position places the inline banner before Home content')
+        check(page.evaluate('''() => document.querySelector('#homeTab').firstElementChild.id''') == PANEL.lstrip("#"),
+              'Top position places the banner immediately under the Home navigation')
+        check(page.evaluate('''() => document.querySelector('#homeTab').firstElementChild.nextElementSibling.id''') == 'slides-container',
+              'Top position places the banner directly ABOVE the Media Bar')
+        check(page.evaluate('''() => document.getElementById('jf-app-header').compareDocumentPosition(document.getElementById('jf-personalized-user-banner')) & Node.DOCUMENT_POSITION_FOLLOWING''') != 0,
+              'Jellyfin top menu stays above the banner')
 
         # The position setting must change actual DOM placement on Home.
         page.evaluate('''() => {
@@ -99,8 +105,20 @@ with sync_playwright() as pw:
           document.dispatchEvent(new Event('visibilitychange'));
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('.homeSectionsContainer').firstElementChild.id''') == PANEL.lstrip("#"),
-              'Switching back to inline top restores the original placement')
+        check(page.evaluate('''() => document.querySelector('#homeTab').firstElementChild.id''') == PANEL.lstrip("#"),
+              'Switching back to inline top restores the media-bar-above placement')
+
+        # Media Bar plugins may insert their hero after the subscription banner is loaded.
+        page.evaluate('''() => {
+          const bar = document.querySelector('#slides-container');
+          bar.remove();
+          const middle = document.createElement('div'); middle.id = 'home-intro';
+          document.querySelector('#homeTab').prepend(middle);
+          document.querySelector('#homeTab').append(bar);
+        }''')
+        page.wait_for_timeout(150)
+        check(page.evaluate('''() => document.querySelector('#jf-personalized-user-banner').nextElementSibling.id''') == 'slides-container',
+              'Late-added media bar stays directly after the banner')
 
         # React-like replacement of home content, without touching body immediate child list.
         requests_before_remount = page.evaluate('bannerRequests')

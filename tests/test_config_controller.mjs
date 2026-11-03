@@ -98,6 +98,14 @@ assert.doesNotMatch(get('#sm-plans').innerHTML, /Hidden/);
 assert.match(get('#sm-users').innerHTML, /Basic/);
 assert.match(get('#sm-users').innerHTML, /\$4\.50/);
 assert.equal(get('#sm-seerr-key').value, '', 'API secret must never be inserted into UI');
+assert.match(get('#sm-plans').innerHTML, /Set default/, 'plan table lacks a one-click default action');
+assert.match(get('#sm-default-plan-current').textContent, /No default plan selected/, 'default-plan summary missing');
+assert.match(get('#sm-users-default-plan').textContent, /No default plan selected/, 'Users page does not expose default status');
+// One-click default choice saves a real plan ID using the administrator API.
+await page.fire('click', {target:{closest:()=>({dataset:{defaultPlan:planId},id:'set-default'})}});
+const quickDefault = calls.filter(c => c.url.endsWith('/plans/default')).at(-1);
+assert.equal(JSON.parse(quickDefault.data).planId, planId);
+
 
 // All six tabs must respond without making a network request.
 for (let i = 0; i < tabs.length; i++) {

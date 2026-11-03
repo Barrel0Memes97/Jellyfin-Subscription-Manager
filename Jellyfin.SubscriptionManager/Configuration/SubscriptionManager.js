@@ -118,14 +118,23 @@ export default function SubscriptionManagerController(page) {
         <td>${u.administrator ? '—' : `<button class="sm-button alt" type="button" data-details="${u.userId}">Configure</button>`}</td>
       </tr>`).join('');
       // The default is persisted separately; editing a plan must not overwrite it.
+      const defaultPlan = planById(state.defaultPlanId);
+      $('#sm-users-default-plan').textContent = defaultPlan
+        ? `Default for new users: ${defaultPlan.name} (${usd(defaultPlan.monthlyCents)}/month)`
+        : 'No default plan selected — choose one in Plans before enabling new users.';
+      $('#sm-default-plan-current').textContent = defaultPlan
+        ? `Current default: ${defaultPlan.name} (${usd(defaultPlan.monthlyCents)}/month)`
+        : 'No default plan selected.';
       $('#sm-default-plan').innerHTML = '<option value="">Choose a default plan...</option>' + state.plans
         .filter(p => p.enabled).map(p => `<option value="${p.id}" ${p.id === state.defaultPlanId ? 'selected' : ''}>${escapeHtml(p.name)} (${usd(p.monthlyCents)}/mo)</option>`).join('');
       $('#sm-plans').innerHTML = state.plans.map(p => `<tr>
-        <td><strong>${escapeHtml(p.name)}</strong>${p.id === state.defaultPlanId ? ' <small>(Default)</small>' : ''}<div class="sm-hint sm-plan-description">${escapeHtml(p.description)}</div></td>
+        <td><strong>${escapeHtml(p.name)}</strong>${p.id === state.defaultPlanId ? ' <strong class="sm-default-label">Default plan</strong>' : ''}<div class="sm-hint sm-plan-description">${escapeHtml(p.description)}</div></td>
         <td>${usd(p.monthlyCents)}</td>
         <td>${p.enabled ? 'Yes' : 'Hidden'}</td>
         <td>${state.users.filter(u => u.included && u.planId === p.id).length}</td>
-        <td><button class="sm-button alt" type="button" data-edit-plan="${p.id}">Configure</button></td></tr>`).join('') || '<tr><td colspan="5">No plans yet. Create one above.</td></tr>';
+        <td><div class="sm-inline"><button class="sm-button alt" type="button" data-edit-plan="${p.id}">Configure</button>
+          <button class="sm-button ${p.id === state.defaultPlanId ? 'alt' : ''}" type="button" data-default-plan="${p.id}"
+            aria-pressed="${p.id === state.defaultPlanId}" ${!p.enabled || p.id === state.defaultPlanId ? 'disabled' : ''}>${p.id === state.defaultPlanId ? 'Current default' : 'Set default'}</button></div></td></tr>`).join('') || '<tr><td colspan="5">No plans yet. Create one below.</td></tr>';
       const payUser = $('#sm-pay-user').value;
       $('#sm-pay-user').innerHTML = usersOptions(payUser, false);
       const ledgerUser = $('#sm-ledger-user').value;
@@ -361,6 +370,14 @@ export default function SubscriptionManagerController(page) {
       if (target.dataset.tab) return showTab(target.dataset.tab);
       if (target.dataset.details) return showDetails(target.dataset.details);
       if (target.id === 'sm-close-detail') { selectedUser = null; $('#sm-detail').hidden = true; return; }
+      if (target.dataset.defaultPlan) {
+        const plan = planById(target.dataset.defaultPlan);
+        if (!plan || !plan.enabled || plan.id === state.defaultPlanId) return;
+        try { await invoke('plans/default', {planId:plan.id},
+          `${plan.name} is now the default plan for newly enrolled users.`); }
+        catch (_) { }
+        return;
+      }
       if (target.dataset.editPlan) {
         const p = planById(target.dataset.editPlan);
         if (p) showPlanEditor(p);

@@ -40,6 +40,10 @@
     #subscriptionManagerPage .sm-perm-row label { flex:1; }
     #subscriptionManagerPage .sm-perm-row select { width: 190px; max-width: 45%; }
     #subscriptionManagerPage .sm-plan-description { max-width: 440px; white-space: normal; }
+    #subscriptionManagerPage .sm-default-label { display:inline-block; margin-left:8px; padding:3px 8px;
+      border-radius:6px; background:#0e749044; color:#67e8f9; font-size:.8rem; }
+    #subscriptionManagerPage .sm-default-card { border-color:#00a4dc99; }
+    #subscriptionManagerPage .sm-default-current { font-size:1rem; font-weight:600; margin:4px 0 12px; }
     #subscriptionManagerPage .sm-mini-heading { font-size:.95rem; font-weight: 600; margin:16px 0 8px; }
     #subscriptionManagerPage #sm-flash { scroll-margin-top: 86px; }
     #subscriptionManagerPage .sm-hidden { display:none !important; }
@@ -76,6 +80,7 @@
     </nav>
     <section class="sm-panel" id="sm-panel-users">
       <div class="sm-toolbar"><h2>Jellyfin users</h2><div class="sm-inline"><button class="sm-button alt" type="button" id="sm-refresh">Refresh users &amp; billing</button><button class="sm-button alt" type="button" id="sm-sync-statuses">Manually update users' statuses</button></div></div>
+      <div class="sm-inline"><strong id="sm-users-default-plan" aria-live="polite">Loading default plan...</strong><button type="button" class="sm-button alt" data-tab="plans">Change default plan</button></div>
       <p class="sm-hint">Everyone is discovered automatically. Choosing a plan enrolls a user automatically; clearing the plan disables management. Turning management on with no selected plan assigns the default from Plans. Turning it off retains their previous plan for later. Administrators cannot be enrolled. Configure opens that user's editor below the table.</p>
       <div class="sm-scroll sm-box"><table><thead><tr><th>User</th><th>Managed</th><th>Plan</th><th>Balance</th><th>Paid through</th><th>Status</th><th>Next renewal</th><th>Details</th></tr></thead><tbody id="sm-users"></tbody></table></div>
       <div id="sm-detail" class="sm-box" hidden>
@@ -119,6 +124,16 @@
       </div>
     </section>
     <section class="sm-panel" id="sm-panel-plans" hidden>
+      <div class="sm-box sm-default-card">
+        <h2>Default subscription plan</h2>
+        <p id="sm-default-plan-current" class="sm-default-current" aria-live="polite">Loading default plan...</p>
+        <form id="sm-default-plan-form" class="sm-grid">
+          <div><label for="sm-default-plan">Default plan when enabling a user</label><select id="sm-default-plan"></select></div>
+          <div><button type="submit" class="sm-button">Save default plan</button></div>
+        </form>
+        <p class="sm-hint">When you enable management for a new user with no previously assigned plan, Jellyfin assigns this plan automatically. Selecting a plan in Users also enables that user; selecting “No plan” disables management.</p>
+      </div>
+      <div class="sm-box sm-scroll"><table><thead><tr><th>Name</th><th>Monthly price</th><th>Available</th><th>Subscribers</th><th>Actions</th></tr></thead><tbody id="sm-plans"></tbody></table></div>
       <div class="sm-box"><h2 id="sm-plan-editor-title">Create a plan</h2>
         <form id="sm-plan-form"><input id="sm-plan-id" type="hidden" />
           <div class="sm-grid"><div><label for="sm-plan-name">Plan name</label><input id="sm-plan-name" placeholder="Standard" maxlength="80" required /></div><div><label for="sm-plan-price">Monthly cost (USD)</label><input id="sm-plan-price" type="number" min="0" max="1000000" step="0.01" value="5.00" required /></div><div><label><input id="sm-plan-enabled" type="checkbox" checked /> Available for new subscribers</label></div></div>
@@ -142,14 +157,6 @@
         </form>
         <p class="sm-hint">Changing a price affects future renewals, not months already paid for. Hiding a plan does not cancel existing subscribers.</p>
       </div>
-      <div class="sm-box">
-        <form id="sm-default-plan-form" class="sm-grid">
-          <div><label for="sm-default-plan">Default plan when enabling a user</label><select id="sm-default-plan"></select></div>
-          <div><button type="submit" class="sm-button">Save default plan</button></div>
-        </form>
-        <p class="sm-hint">If you turn on subscription management without choosing a plan, this plan is assigned automatically. Selecting a plan in Users also enables that user; selecting “No plan” disables management.</p>
-      </div>
-      <div class="sm-box sm-scroll"><table><thead><tr><th>Name</th><th>Monthly price</th><th>Available</th><th>Subscribers</th><th></th></tr></thead><tbody id="sm-plans"></tbody></table></div>
     </section>
     <section class="sm-panel" id="sm-panel-payments" hidden>
       <div class="sm-box"><h2>Credit an account</h2><form id="sm-payment-form">
