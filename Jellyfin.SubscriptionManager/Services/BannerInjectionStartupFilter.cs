@@ -90,7 +90,8 @@ public sealed class BannerInjectionMiddleware
 
             // PathBase is provided by ASP.NET Core for installations under a sub-path.
             var prefix = context.Request.PathBase.Value?.TrimEnd('/') ?? string.Empty;
-            var tag = $"<script data-subscription-manager-banner defer src=\"{prefix}/SubscriptionManager/banner.js\"></script>";
+            var version = typeof(BannerInjectionMiddleware).Assembly.GetName().Version?.ToString() ?? "0";
+            var tag = $"<script data-subscription-manager-banner defer src=\"{prefix}/SubscriptionManager/banner.js?v={version}\"></script>";
             var output = Encoding.UTF8.GetBytes(html.Insert(headEnd, tag));
             if (encoding.Length != 0)
             {

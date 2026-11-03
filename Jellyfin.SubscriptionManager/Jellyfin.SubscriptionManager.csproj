@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Jellyfin.Plugin.SubscriptionManager</AssemblyName>
     <RootNamespace>Jellyfin.Plugin.SubscriptionManager</RootNamespace>
-    <Version>0.2.4.1</Version>
+    <Version>0.2.4.2</Version>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
