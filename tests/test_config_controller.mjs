@@ -78,7 +78,7 @@ globalThis.ApiClient = {
   getUrl: path => '/' + path,
   ajax: async options => {
     calls.push(options);
-    if (options.url.endsWith('/overview')) return structuredClone(state);
+    if (options.url.includes('/overview')) return structuredClone(state);
     return { success:true };
   }
 };
@@ -89,7 +89,7 @@ assert.ok(page.listeners.click?.length, 'click delegation not attached');
 assert.ok(page.listeners.viewshow?.length, 'viewshow not attached');
 assert.ok(get('#sm-plan-form').listeners.submit?.length, 'form handler not attached');
 await new Promise(resolve => setImmediate(resolve));
-assert.ok(calls.some(c => c.url.endsWith('/overview')), 'admin data never requested');
+assert.ok(calls.some(c => c.url.includes('/overview')), 'admin data never requested');
 assert.match(get('#sm-metrics').innerHTML, /Active subscriptions/);
 assert.match(get('#sm-plans').innerHTML, /Basic/);
 assert.match(get('#sm-plans').innerHTML, /\$4\.50/);
@@ -162,6 +162,73 @@ assert.equal(JSON.parse(seerrSave.data).clearApiKey, false);
 await get('#sm-banner-form').fire('submit', { preventDefault() {} });
 assert.ok(calls.some(c => c.url.endsWith('/banner')), 'Banner settings did not save');
 
+// Reflect a successful plan assignment in the mock server on the next page load.
+state.users[0].planId = planId;
+await page.fire('viewshow');
+// New 0.2.4.0: Friday-cycle selector and opening-credit mode must make
+// authenticated POST requests with the selected user's id, not screen labels.
+get('#sm-detail-cycle').value = 'lastFriday';
+await get('#sm-cycle-form').fire('submit', {preventDefault() {}});
+const cycleRequest = calls.find(c => c.url.endsWith('/users/' + id + '/billing-cycle'));
+assert.equal(JSON.parse(cycleRequest.data).cycle, 'lastFriday');
+
+globalThis.confirm = () => true;
+get('#sm-opening-start').value = '2026-12-08';
+get('#sm-opening-payment').value = '20.00';
+get('#sm-opening-credit-toggle').checked = true;
+get('#sm-opening-credit').value = '20.00';
+await get('#sm-opening-form').fire('change', {target:get('#sm-opening-credit-toggle')});
+assert.equal(get('#sm-opening-credit-wrap').hidden, false);
+assert.equal(get('#sm-opening-through-wrap').hidden, true);
+assert.match(get('#sm-opening-preview').textContent, /4 full month/); // $20 / $4.50
+await get('#sm-opening-form').fire('submit', {preventDefault() {}});
+const initial = calls.find(c => c.url.endsWith('/users/' + id + '/opening'));
+assert.ok(initial, 'opening credit was not submitted');
+assert.equal(JSON.parse(initial.data).firstPaymentCents, 2000);
+assert.equal(JSON.parse(initial.data).startingCreditCents, 2000);
+assert.equal(JSON.parse(initial.data).mode, 'credit');
+
+get('#sm-user-banner-title').value = 'Welcome back, {name}!';
+get('#sm-user-banner-color').value = '#4120ff';
+await get('#sm-user-banner-form').fire('submit', {preventDefault() {}});
+const personal = calls.find(c => c.url.endsWith('/users/' + id + '/banner'));
+assert.equal(JSON.parse(personal.data).color, '#4120ff');
+
+// Update statuses must NOT make billing charges. It uses overview?recalculate=false.
+await page.fire('click', {target:{closest:()=>({dataset:{},id:'sm-sync-statuses'})}});
+assert.ok(calls.some(c => c.url.endsWith('/sync/statuses')));
+assert.ok(calls.some(c => c.url.endsWith('/overview?recalculate=false')));
+assert.equal(get('#sm-flash').scrolled, true, 'alerts should scroll into view');
+
+// Seerr test must use unsaved form values, rather than silently testing
+// the previously persisted credentials.
+get('#sm-seerr-url').value = 'http://seerr-new:5055';
+get('#sm-seerr-key').value = 'seerr-secret-not-persisted-yet';
+await page.fire('click', {target:{closest:()=>({dataset:{},id:'sm-seerr-test'})}});
+const testRequest = calls.find(c => c.url.endsWith('/seerr/test'));
+assert.equal(JSON.parse(testRequest.data).url, 'http://seerr-new:5055');
+assert.equal(JSON.parse(testRequest.data).apiKey, 'seerr-secret-not-persisted-yet');
+
+const txId = 'd1e66419-bf20-42be-a48b-fc62161e8e8b';
+state.ledger = [{Id:txId,UserId:id,Kind:'deposit',AmountCents:2000,
+  CashAmountCents:2000,BalanceAfterCents:2000,Refundable:true,CreatedUtc:'2026-12-08T12:00:00Z',Note:'Cash'}];
+await page.fire('viewshow');
+await new Promise(resolve => setImmediate(resolve));
+assert.match(get('#sm-ledger').innerHTML, /Refund/);
+await page.fire('click', {target:{closest:()=>({dataset:{refund:txId},id:'refund'})}});
+const refundRequest = calls.find(c => c.url.endsWith('/transactions/' + txId + '/refund'));
+assert.ok(refundRequest, 'refund did not send a request');
+
+// Banner preview must show a gradient and its custom greeting, even when
+// server settings are serialized in PascalCase.
+state.banner = {Enabled:true, Layout:'home', Gradient:true, Icon:'👋', TitleTemplate:'Welcome, {name}!',
+  ActiveColor:'#166534', ActiveText:'Active until {expiration}', ShowUserName:true,
+  ShowPlan:true, ShowPaidThrough:true, ShowRenewal:true, Dismissible:true};
+await page.fire('viewshow');
+await new Promise(resolve => setImmediate(resolve));
+assert.match(get('#sm-b-preview').style.background, /linear-gradient/);
+assert.equal(get('#sm-b-title-template').value, 'Welcome, {name}!');
+
 // Repeated controller setup on the same DOM node should not multiply callbacks.
 const before = page.listeners.click.length;
 new Controller(page);
@@ -181,4 +248,4 @@ await bad.page.fire('click', { target: {closest: () => bad.tabs[4]} });
 assert.equal(bad.panels[4].hidden, false);
 globalThis.ApiClient.ajax = originalAjax;
 console.error = originalError;
-console.log('Admin UI controller tests passed (load, six tabs, save plan, enrollment, banner save, error UI, duplicate handler prevention).');
+console.log('Admin UI controller tests passed (billing cycle, opening credit, personal banner, refund, Seerr test, status sync, banner preview, original coverage).');

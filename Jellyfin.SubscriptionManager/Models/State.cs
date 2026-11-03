@@ -60,6 +60,12 @@ public sealed class Membership
     public DateOnly? PaidThrough { get; set; }
     public DateOnly? NextChargeOn { get; set; }
     public int BillingAnchorDay { get; set; }
+    // "legacy" keeps pre-0.2.4 monthly anchors; new users may choose a Friday.
+    public string BillingCycle { get; set; } = "legacy";
+    public DateOnly? CoverageStartsOn { get; set; }
+    public bool OpeningRecorded { get; set; }
+    public string BannerTitle { get; set; } = string.Empty;
+    public string BannerColor { get; set; } = string.Empty;
     public List<ScheduleSnapshot> OriginalSchedules { get; set; } = new();
     public bool OriginalSchedulesCaptured { get; set; }
     public bool RestorePending { get; set; }
@@ -88,6 +94,10 @@ public sealed class LedgerEntry
     public Guid? PlanId { get; set; }
     public DateOnly? CycleStart { get; set; }
     public DateOnly? CycleEnd { get; set; }
+    // Cash actually received/refunded, distinct from the account-credit delta.
+    // For older deposits the cash amount is inferred from AmountCents.
+    public long? CashAmountCents { get; set; }
+    public Guid? RefundOf { get; set; }
 }
 
 public sealed record PlanRequest(
@@ -105,6 +115,15 @@ public sealed record PaymentRequest(Guid UserId, long AmountCents, string? Note)
 public sealed record AdjustmentRequest(Guid UserId, long AmountCents, string? Note);
 public sealed record PaidThroughRequest(DateOnly? PaidThrough, string? Note);
 public sealed record SettingsRequest(string TimeZoneId);
+public sealed record BillingCycleRequest(string Cycle);
+public sealed record RefundRequest(string? Note);
+public sealed record UserBannerRequest(string? Title, string? Color);
+public sealed record OpeningRequest(
+    string Mode, DateOnly StartDate, DateOnly? PaidThrough,
+    long FirstPaymentCents, long StartingCreditCents, string? Note);
+public sealed record SeerrTestRequest(
+    string? Url, string? ApiKey, bool Enabled, bool AutoImportUsers);
+
 public sealed record SeerrSettingsRequest(
     [property: JsonPropertyName("enabled")] bool Enabled,
     [property: JsonPropertyName("url")] string Url,
@@ -127,12 +146,18 @@ public sealed class BannerSettings
     public bool ShowPaidThrough { get; set; } = true;
     public bool ShowBalance { get; set; }
     public bool Dismissible { get; set; } = true;
+    public bool ShowRenewal { get; set; } = true;
+    // "home" matches the original inline greeting; "floating" uses a fixed notification.
+    public string Layout { get; set; } = "home";
+    public string Icon { get; set; } = "👋";
+    public string TitleTemplate { get; set; } = "Welcome, {name}!";
+    public bool Gradient { get; set; } = true;
     public int WarningDays { get; set; } = 7;
     public int RefreshMinutes { get; set; } = 5;
     public string Position { get; set; } = "top";
-    public string ActiveText { get; set; } = "Subscription active";
-    public string ExpiringText { get; set; } = "Subscription expires soon";
-    public string ExpiredText { get; set; } = "Subscription expired";
+    public string ActiveText { get; set; } = "Thanks for supporting the server! 💖 Your subscription is active through {expiration}.";
+    public string ExpiringText { get; set; } = "Thanks for your support! Your subscription ends in {daysLeft} days ({expiration}).";
+    public string ExpiredText { get; set; } = "Your subscription has expired. Renew to restore your subscription benefits.";
     public string UnmanagedText { get; set; } = "Subscription not configured";
     public string ActiveColor { get; set; } = "#166534";
     public string ExpiringColor { get; set; } = "#92400e";

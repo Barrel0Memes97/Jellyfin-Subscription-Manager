@@ -52,6 +52,9 @@ public sealed partial class SubscriptionService
         {
             member.OriginalPermissions ??= new Dictionary<string, bool>();
             member.OriginalSchedules ??= new List<ScheduleSnapshot>();
+            member.BillingCycle = string.IsNullOrWhiteSpace(member.BillingCycle) ? "legacy" : member.BillingCycle;
+            member.BannerTitle ??= string.Empty;
+            member.BannerColor ??= string.Empty;
         }
     }
 
@@ -148,24 +151,51 @@ public sealed partial class SubscriptionService
         });
     }
 
+    private static bool IsActive(Membership m, DateOnly today) =>
+        m.Included && m.PaidThrough is { } paid && paid >= today &&
+        (!m.CoverageStartsOn.HasValue || m.CoverageStartsOn.Value <= today);
+
     private void ChargeIfDue(Membership member, DateOnly today)
     {
-        if (!member.Included || (member.PaidThrough.HasValue && member.PaidThrough.Value >= today)) return;
+        if (!member.Included || IsActive(member, today)) return;
+        if (member.CoverageStartsOn is { } coverage && coverage > today) return;
         var plan = _state.Plans.FirstOrDefault(p => p.Id == member.PlanId);
         if (plan is null || member.BalanceCents < plan.MonthlyCents) return;
 
-        // If funds ran out, do not back-bill months during which access was expired.
+        if (member.BillingCycle is "firstFriday" or "lastFriday")
+        {
+            // A missed scheduled Friday is never billed retroactively. Next attempt
+            // is the next Friday of the chosen week, not an arbitrary day.
+            var due = member.NextChargeOn ?? NextScheduledFriday(today, member.BillingCycle);
+            if (due < today)
+            {
+                due = NextScheduledFriday(today, member.BillingCycle);
+                member.NextChargeOn = due;
+                Save();
+            }
+            if (due > today) return;
+            var next = NextFridayInFollowingMonth(due, member.BillingCycle);
+            AddLedger(member, "charge", -plan.MonthlyCents,
+                $"{plan.Name}: {due:yyyy-MM-dd} to {next.AddDays(-1):yyyy-MM-dd}",
+                plan, due, next.AddDays(-1));
+            member.PaidThrough = next.AddDays(-1);
+            member.NextChargeOn = next;
+            Save();
+            return;
+        }
+
+        // Preserve the pre-0.2.4 billing anchor for migrated subscriptions.
         var start = member.NextChargeOn.HasValue && member.NextChargeOn.Value >= today
             ? member.NextChargeOn.Value : today;
         var anchor = member.BillingAnchorDay is >= 1 and <= 31 ? member.BillingAnchorDay : start.Day;
-        var next = NextMonth(start, anchor);
-        var end = next.AddDays(-1);
-        AddLedger(member, "charge", -plan.MonthlyCents, $"{plan.Name}: {start:yyyy-MM-dd} to {end:yyyy-MM-dd}",
-            plan, start, end);
+        var following = NextMonth(start, anchor);
+        var end = following.AddDays(-1);
+        AddLedger(member, "charge", -plan.MonthlyCents,
+            $"{plan.Name}: {start:yyyy-MM-dd} to {end:yyyy-MM-dd}", plan, start, end);
         member.BillingAnchorDay = anchor;
         member.PaidThrough = end;
-        member.NextChargeOn = next;
-        Save(); // Persist the charge before changing Jellyfin access.
+        member.NextChargeOn = following;
+        Save();
     }
 
     // The plugin NEVER manages administrator, disabled, library, account hiding,
@@ -234,7 +264,7 @@ public sealed partial class SubscriptionService
         if (member.RestorePending && member.OriginalSchedulesCaptured)
             desired = Restore(member, user.Id);
         else if (member.Included)
-            desired = member.PaidThrough is { } paid && paid >= Today()
+            desired = IsActive(member, Today())
                 ? (member.OriginalSchedulesCaptured ? Restore(member, user.Id) : Array.Empty<AccessSchedule>())
                 : LockedSchedule(user.Id);
 
@@ -314,12 +344,12 @@ public sealed partial class SubscriptionService
         await SyncSeerrAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<object> OverviewAsync(CancellationToken ct = default)
+    public async Task<object> OverviewAsync(CancellationToken ct = default, bool recalculate = true)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await ReconcileLockedAsync(ct).ConfigureAwait(false);
+            if (recalculate) await ReconcileLockedAsync(ct).ConfigureAwait(false);
             var today = Today();
             var users = _users.GetUsers().OrderBy(u => u.Username, StringComparer.OrdinalIgnoreCase)
                 .Select(u =>
@@ -329,13 +359,17 @@ public sealed partial class SubscriptionService
                     var disabled = HasGrantedPermission(u, PermissionKind.IsDisabled);
                     var status = admin ? "administrator" : disabled ? "disabled" : m?.Included != true ? "not managed"
                         : m.PlanId is null ? "no plan"
-                        : m.PaidThrough.HasValue && m.PaidThrough.Value >= today ? "active" : "expired";
+                        : IsActive(m, today) ? "active" : "expired";
                     return new
                     {
                         userId = u.Id, name = u.Username, administrator = admin, disabled,
                         included = m?.Included ?? false, planId = m?.PlanId,
                         balanceCents = m?.BalanceCents ?? 0L, paidThrough = m?.PaidThrough,
-                        nextChargeOn = m?.NextChargeOn, status
+                        nextChargeOn = m?.NextChargeOn ?? (m is { BillingCycle: "firstFriday" or "lastFriday" }
+                            ? (DateOnly?)NextScheduledFriday(m.PaidThrough?.AddDays(1) ?? today, m.BillingCycle) : null),
+                        billingCycle = m?.BillingCycle ?? "legacy", openingRecorded = m?.OpeningRecorded ?? false,
+                        coverageStartsOn = m?.CoverageStartsOn, bannerTitle = m?.BannerTitle ?? "",
+                        bannerColor = m?.BannerColor ?? "", status
                     };
                 }).ToArray();
             return new
@@ -366,8 +400,22 @@ public sealed partial class SubscriptionService
                     }
                 }).ToArray(),
                 users,
-                ledger = _state.Ledger.OrderByDescending(t => t.CreatedUtc).ThenByDescending(t => t.Id).Take(1000).ToArray(),
-                totalCollectedCents = _state.Ledger.Where(t => t.Kind == "deposit").Sum(t => t.AmountCents),
+                ledger = _state.Ledger.OrderByDescending(t => t.CreatedUtc).ThenByDescending(t => t.Id)
+                    .Take(1000).Select(t => new
+                    {
+                        id = t.Id, userId = t.UserId, createdUtc = t.CreatedUtc,
+                        kind = t.Kind, amountCents = t.AmountCents,
+                        cashAmountCents = t.CashAmountCents ?? (t.Kind == "deposit" ? t.AmountCents : 0),
+                        balanceAfterCents = t.BalanceAfterCents, note = t.Note,
+                        refundOf = t.RefundOf,
+                        refunded = _state.Ledger.Any(x => x.RefundOf == t.Id),
+                        refundable = (t.AmountCents != 0 || (t.CashAmountCents ?? 0) != 0)
+                            && t.Kind != "refund" && t.Kind != "opening credit"
+                            && t.Kind != "opening allocation"
+                            && !_state.Ledger.Any(x => x.RefundOf == t.Id)
+                    }).ToArray(),
+                totalCollectedCents = _state.Ledger.Sum(t => t.CashAmountCents ??
+                    (t.Kind == "deposit" ? t.AmountCents : 0L)),
                 totalBalanceCents = _state.Memberships.Sum(m => m.BalanceCents),
                 activeCount = users.Count(u => u.status == "active"),
                 enrolledCount = users.Count(u => u.included),
@@ -492,8 +540,12 @@ public sealed partial class SubscriptionService
                 req.PaidThrough.Value > Today().AddYears(10)))
                 throw new ArgumentException("Expiration must be within the supported date range");
             m.PaidThrough = req.PaidThrough;
-            m.NextChargeOn = req.PaidThrough?.AddDays(1);
-            m.BillingAnchorDay = m.NextChargeOn?.Day ?? 0;
+            m.NextChargeOn = req.PaidThrough.HasValue
+                ? NextDueAfter(req.PaidThrough.Value, m.BillingCycle)
+                : (m.BillingCycle is "firstFriday" or "lastFriday"
+                    ? NextScheduledFriday(Today(), m.BillingCycle) : null);
+            m.CoverageStartsOn = null;
+            m.BillingAnchorDay = m.BillingCycle == "legacy" ? m.NextChargeOn?.Day ?? 0 : 0;
             AddLedger(m, "expiration override", 0, (req.Note ?? "Manual expiration change").Trim());
             Save();
             await ReconcileLockedAsync(CancellationToken.None).ConfigureAwait(false);
@@ -531,7 +583,7 @@ public sealed partial class SubscriptionService
             var plan = _state.Plans.FirstOrDefault(p => p.Id == m?.PlanId);
             var enrolled = m?.Included == true;
             var status = !enrolled || admin ? "unmanaged" :
-                m!.PaidThrough.HasValue && m.PaidThrough.Value >= today
+                IsActive(m!, today)
                     ? (m.PaidThrough.Value.DayNumber - today.DayNumber <= b.WarningDays ? "expiring" : "active")
                     : "expired";
             var show = b.Enabled && !HasGrantedPermission(user, PermissionKind.IsDisabled) &&
@@ -550,13 +602,20 @@ public sealed partial class SubscriptionService
                 plan = b.ShowPlan && enrolled ? plan?.Name : null,
                 paidThrough = b.ShowPaidThrough && enrolled ? m?.PaidThrough : null,
                 balanceCents = b.ShowBalance && enrolled ? m?.BalanceCents : null,
+                renewalOn = b.ShowRenewal && enrolled ? m?.NextChargeOn : null,
+                customTitle = m?.BannerTitle,
+                customColor = m?.BannerColor,
                 daysRemaining = b.ShowDaysRemaining && enrolled && m?.PaidThrough is { } through
                     ? Math.Max(0, through.DayNumber - today.DayNumber) : (int?)null,
                 appearance = new
                 {
-                    b.Position, b.Dismissible, b.RefreshMinutes,
-                    b.ActiveText, b.ExpiringText, b.ExpiredText, b.UnmanagedText,
-                    b.ActiveColor, b.ExpiringColor, b.ExpiredColor, b.UnmanagedColor
+                    position = b.Position, layout = b.Layout, gradient = b.Gradient,
+                    icon = b.Icon, titleTemplate = b.TitleTemplate,
+                    dismissible = b.Dismissible, refreshMinutes = b.RefreshMinutes,
+                    activeText = b.ActiveText, expiringText = b.ExpiringText,
+                    expiredText = b.ExpiredText, unmanagedText = b.UnmanagedText,
+                    activeColor = b.ActiveColor, expiringColor = b.ExpiringColor,
+                    expiredColor = b.ExpiredColor, unmanagedColor = b.UnmanagedColor
                 }
             };
         }
@@ -569,6 +628,10 @@ public sealed partial class SubscriptionService
         if (requested.WarningDays is < 0 or > 365) throw new ArgumentException("Warning days must be 0–365");
         if (requested.RefreshMinutes is < 1 or > 120) throw new ArgumentException("Refresh interval must be 1–120 minutes");
         if (requested.Position is not ("top" or "bottom")) throw new ArgumentException("Position must be top or bottom");
+        if (requested.Layout is not ("home" or "floating")) throw new ArgumentException("Banner layout must be home or floating");
+        if (requested.Icon is null || requested.Icon.Length > 12 ||
+            requested.TitleTemplate is null || requested.TitleTemplate.Length > 120)
+            throw new ArgumentException("Banner icon or title is too long");
         static bool ColorOk(string? color) => color is not null && Regex.IsMatch(color, "^#[0-9a-fA-F]{6}$");
         if (!ColorOk(requested.ActiveColor) || !ColorOk(requested.ExpiringColor) ||
             !ColorOk(requested.ExpiredColor) || !ColorOk(requested.UnmanagedColor))

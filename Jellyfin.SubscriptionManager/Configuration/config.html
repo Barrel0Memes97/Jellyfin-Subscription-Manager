@@ -41,6 +41,23 @@
     #subscriptionManagerPage .sm-perm-row select { width: 190px; max-width: 45%; }
     #subscriptionManagerPage .sm-plan-description { max-width: 440px; white-space: normal; }
     #subscriptionManagerPage .sm-mini-heading { font-size:.95rem; font-weight: 600; margin:16px 0 8px; }
+    #subscriptionManagerPage #sm-flash { scroll-margin-top: 86px; }
+    #subscriptionManagerPage .sm-hidden { display:none !important; }
+    #subscriptionManagerPage .sm-banner-viewport { border:1px solid #5558; border-radius:12px;
+      background: var(--background, #18191b); padding:22px 12px; margin:12px 0; min-height:100px; }
+    #subscriptionManagerPage #sm-b-preview { margin: 0 auto; width: calc(100% - 16px); max-width:800px;
+      min-height:58px; box-sizing:border-box; border-radius:10px; border-left:5px solid rgba(255,255,255,.95);
+      color:white; display:flex; gap:12px; align-items:center; padding:13px 46px 13px 15px;
+      box-shadow:0 6px 24px #0007; position:relative; line-height:1.4; }
+    #subscriptionManagerPage #sm-b-preview .sm-preview-icon { font-size:24px; flex-shrink:0; }
+    #subscriptionManagerPage #sm-b-preview .sm-preview-title {font-size:16px;font-weight:700;}
+    #subscriptionManagerPage #sm-b-preview .sm-preview-message {font-size:13px;opacity:.87;margin-top:3px;}
+    #subscriptionManagerPage #sm-b-preview .sm-preview-close {position:absolute;right:10px;top:9px;
+      color:white;background:#ffffff30;border:0;border-radius:50%;width:28px;height:28px;line-height:28px;text-align:center;}
+    #subscriptionManagerPage .sm-switch-row { display:flex; align-items:center; gap:8px; padding:8px 0; }
+    #subscriptionManagerPage .sm-switch-row input { flex:0 0 20px; }
+    #subscriptionManagerPage .sm-subheading {font-weight:600; margin:16px 0 5px;}
+    #subscriptionManagerPage .sm-hint strong {color:var(--primary-text-color,#fff);}
   </style>
   <div class="sm-shell">
     <h1 class="sm-title">Subscription Manager</h1>
@@ -56,9 +73,9 @@
       <button class="sm-tab" type="button" data-tab="settings" aria-selected="false">Settings</button>
     </nav>
     <section class="sm-panel" id="sm-panel-users">
-      <div class="sm-toolbar"><h2>Jellyfin users</h2><button class="sm-button alt" type="button" id="sm-refresh">Refresh users &amp; billing</button></div>
+      <div class="sm-toolbar"><h2>Jellyfin users</h2><div class="sm-inline"><button class="sm-button alt" type="button" id="sm-refresh">Refresh users &amp; billing</button><button class="sm-button alt" type="button" id="sm-sync-statuses">Manually update users' statuses</button></div></div>
       <p class="sm-hint">Everyone is discovered automatically. Only accounts you explicitly include are managed. Administrators cannot be enrolled. Configure opens that user's editor below the table.</p>
-      <div class="sm-scroll sm-box"><table><thead><tr><th>User</th><th>Managed</th><th>Plan</th><th>Balance</th><th>Paid through</th><th>Status</th><th>Details</th></tr></thead><tbody id="sm-users"></tbody></table></div>
+      <div class="sm-scroll sm-box"><table><thead><tr><th>User</th><th>Managed</th><th>Plan</th><th>Balance</th><th>Paid through</th><th>Status</th><th>Next renewal</th><th>Details</th></tr></thead><tbody id="sm-users"></tbody></table></div>
       <div id="sm-detail" class="sm-box" hidden>
         <div class="sm-toolbar"><h2 id="sm-detail-name">User settings</h2><button class="sm-button alt" id="sm-close-detail" type="button">Close</button></div>
         <div id="sm-detail-summary" class="sm-hint"></div>
@@ -66,6 +83,32 @@
           <div class="sm-grid"><div><label for="sm-detail-plan">Subscription plan</label><select id="sm-detail-plan"></select></div><div><label for="sm-detail-expiry">Manually set paid-through date</label><input id="sm-detail-expiry" type="date" /></div></div>
           <p class="sm-hint">A manual date override can import the expiration date from the old banner. Access stays active through the date shown; billing resumes the next day. An empty date clears prepaid coverage.</p>
           <div class="sm-inline"><button class="sm-button" type="button" id="sm-save-plan">Save plan</button><button class="sm-button alt" type="submit">Save expiration override</button></div>
+        </form>
+        <h3>Monthly billing day</h3>
+        <form id="sm-cycle-form">
+          <div class="sm-grid"><div><label for="sm-detail-cycle">Renewal cycle</label>
+            <select id="sm-detail-cycle"><option value="legacy">Original monthly anniversary (keep existing)</option><option value="firstFriday">First Friday of each month</option><option value="lastFriday">Last Friday of each month</option></select></div>
+            <div><button type="submit" class="sm-button">Save billing cycle</button></div></div>
+          <p class="sm-hint">Switching to Friday billing keeps existing paid-through coverage. The next charge is scheduled for the selected Friday after that date. Any gap is not granted for free.</p>
+        </form>
+        <h3>First payment and starting subscription</h3>
+        <form id="sm-opening-form">
+          <p class="sm-hint">One-time migration setup. Record a historical first payment for reporting, then choose either a prepaid paid-through date or starting credit to allocate into full months. A first payment is NOT added to the balance a second time.</p>
+          <div class="sm-grid"><div><label for="sm-opening-start">Subscription starting date</label><input id="sm-opening-start" type="date" required /></div>
+          <div><label for="sm-opening-payment">First payment received (USD, historical)</label><input id="sm-opening-payment" type="number" step="0.01" min="0" value="0.00" required /></div>
+          </div>
+          <label class="sm-switch-row"><input id="sm-opening-credit-toggle" type="checkbox" /> Calculate coverage from starting credit instead of entering a paid-through date</label>
+          <div id="sm-opening-through-wrap"><label for="sm-opening-through">Paid-through date (inclusive)</label><input id="sm-opening-through" type="date" /></div>
+          <div id="sm-opening-credit-wrap" hidden><label for="sm-opening-credit">Starting credit to allocate (USD)</label><input id="sm-opening-credit" type="number" step="0.01" min="0" value="0.00" /><p class="sm-hint">Entire months are prepaid at the assigned plan price; unused cents remain available credit.</p></div>
+          <div id="sm-opening-preview" class="sm-hint" aria-live="polite"></div>
+          <button class="sm-button" type="submit" id="sm-opening-submit">Record initial subscription</button>
+        </form>
+        <h3>Personalized banner appearance</h3>
+        <form id="sm-user-banner-form"><div class="sm-grid">
+          <div><label for="sm-user-banner-title">Custom title (optional)</label><input id="sm-user-banner-title" maxlength="120" placeholder="Welcome, {name}!" /></div>
+          <div><label for="sm-user-banner-color">User banner color (optional)</label><input id="sm-user-banner-color" placeholder="#3b82f6" pattern="#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?" /></div></div>
+          <p class="sm-hint">Overrides the shared greeting and status color for this user. Template values include {name}, {plan}, {expiration}, {daysLeft}, {renewal} and {balance}.</p>
+          <button class="sm-button alt" type="submit">Save personal banner</button>
         </form>
       </div>
     </section>
@@ -105,14 +148,18 @@
     <section class="sm-panel" id="sm-panel-transactions" hidden>
       <div class="sm-toolbar"><h2>Account history</h2><button class="sm-button alt" type="button" id="sm-export">Export visible transactions (CSV)</button></div>
       <div class="sm-grid"><div><label for="sm-ledger-user">Filter by user</label><select id="sm-ledger-user"><option value="">All users</option></select></div></div>
-      <div class="sm-box sm-scroll"><table><thead><tr><th>Date (UTC)</th><th>User</th><th>Type</th><th>Amount</th><th>Balance after</th><th>Note</th></tr></thead><tbody id="sm-ledger"></tbody></table></div>
-      <p class="sm-hint">The page loads the 1,000 most recent entries. The complete ledger remains in the plugin data file.</p>
+      <div class="sm-box sm-scroll"><table><thead><tr><th>Date (UTC)</th><th>User</th><th>Type</th><th>Amount</th><th>Balance after</th><th>Cash received/refunded</th><th>Note</th><th>Refund</th></tr></thead><tbody id="sm-ledger"></tbody></table></div>
+      <p class="sm-hint">The page loads the 1,000 most recent entries. Refund creates a linked reversal rather than deleting the original. Refunding a consumed payment can leave a negative balance; previously paid-through dates are not automatically revoked. The complete ledger is stored in the plugin data file.</p>
     </section>
     <section class="sm-panel" id="sm-panel-banner" hidden>
       <div class="sm-box">
         <h2>Subscription banner</h2>
         <p class="sm-hint">Appears in the Jellyfin Web app for each signed-in account. No JavaScript injector is needed. Browser-based clients only; native TV apps do not show this banner.</p>
         <form id="sm-banner-form">
+          <div class="sm-grid"><div><label for="sm-b-layout">Banner placement</label><select id="sm-b-layout"><option value="home">On home page (original-style welcome card)</option><option value="floating">Floating notification (all pages)</option></select></div>
+          <div><label for="sm-b-title-template">Greeting title</label><input id="sm-b-title-template" maxlength="120" placeholder="Welcome, {name}!" /></div>
+          <div><label for="sm-b-icon">Icon / emoji</label><input id="sm-b-icon" maxlength="12" placeholder="👋" /></div></div>
+          <label class="sm-switch-row"><input id="sm-b-gradient" type="checkbox" /> Gradient with colored accent (matches original banner)</label>
           <div class="sm-columns">
             <div>
               <label><input type="checkbox" id="sm-b-enabled" /> Enable banner for users</label>
@@ -128,6 +175,7 @@
               <label><input type="checkbox" id="sm-b-plan" /> Display plan name</label>
               <label><input type="checkbox" id="sm-b-date" /> Display paid-through date</label>
               <label><input type="checkbox" id="sm-b-balance" /> Display account credit</label>
+              <label><input type="checkbox" id="sm-b-renewal" /> Display next renewal date</label>
               <label><input type="checkbox" id="sm-b-dismiss" /> Allow temporary dismissal</label>
               <label for="sm-b-position">Screen position</label><select id="sm-b-position"><option value="top">Top, below header</option><option value="bottom">Bottom</option></select>
             </div>
@@ -147,13 +195,15 @@
             <div><label for="sm-b-unmanaged-color">Unmanaged background</label><input id="sm-b-unmanaged-color" type="color" /></div>
           </div>
           <button type="submit" class="sm-button">Save banner settings</button>
-          <p class="sm-hint">Changes take effect on each browser's next banner refresh; a page reload will also update it.</p>
+          <p class="sm-hint">Use {name}, {plan}, {status}, {expiration}, {daysLeft}, {renewal}, and {balance} in messages. Personal user titles/colors take precedence. Changes take effect on each browser's next refresh.</p>
         </form>
       </div>
       <div class="sm-box"><h2>Banner preview</h2>
         <label for="sm-b-preview-status">Preview subscription status</label>
         <select id="sm-b-preview-status"><option value="active">Active</option><option value="expiring">Expiring soon</option><option value="expired">Expired</option><option value="unmanaged">Unmanaged</option></select>
-        <div id="sm-b-preview" role="status" style="margin-top:16px;padding:13px;border-radius:12px;color:white;"></div>
+        <label for="sm-b-preview-user">Preview as</label><select id="sm-b-preview-user"><option value="">Example user</option></select>
+        <div class="sm-banner-viewport"><div id="sm-b-preview" role="status"></div></div>
+        <p class="sm-hint">Live preview — updates as you edit colors, messages, icon, and display options. It does not save until you press Save banner settings.</p>
       </div>
     </section>
     <section class="sm-panel" id="sm-panel-settings" hidden>
@@ -168,6 +218,7 @@
           </div>
           <label><input id="sm-seerr-import" type="checkbox" /> Automatically import enrolled Jellyfin users missing in Seerr</label>
           <label><input id="sm-seerr-clear-key" type="checkbox" /> Remove saved Seerr API key</label>
+          <p class="sm-hint">Test checks the URL and key currently typed in the fields, even before saving. If there isn't already a working saved connection, a successful test automatically saves the entered settings; a failed test NEVER saves. When a working saved connection exists, Test won't overwrite it; use Save to update it.</p>
           <p class="sm-hint">If auto-import is off, users must already exist in Seerr. Sync uses their Jellyfin user IDs, not names. Only request-related permissions are managed; existing admin and manager permissions are never overridden.</p>
           <div id="sm-seerr-status" class="sm-hint" aria-live="polite"></div>
           <div class="sm-inline"><button type="submit" class="sm-button">Save Seerr settings</button><button type="button" id="sm-seerr-test" class="sm-button alt">Test connection</button><button type="button" id="sm-seerr-sync" class="sm-button alt">Sync Seerr now</button></div>

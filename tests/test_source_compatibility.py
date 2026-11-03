@@ -24,7 +24,7 @@ class SourceCompatibilityTests(unittest.TestCase):
     def test_version_and_runtime(self):
         project = PROJECT.read_text(encoding='utf-8')
         self.assertIn('<TargetFramework>net10.0</TargetFramework>', project)
-        self.assertIn('<Version>0.2.3.0</Version>', project)
+        self.assertIn('<Version>0.2.4.0</Version>', project)
         self.assertIn('Version="12.4.0"', project)
 
 

@@ -16,7 +16,8 @@ public sealed class SubscriptionController : ControllerBase
 
     [Authorize(Policy = Policies.RequiresElevation)]
     [HttpGet("overview")]
-    public async Task<IActionResult> Overview(CancellationToken ct) => Ok(await _service.OverviewAsync(ct));
+    public async Task<IActionResult> Overview(CancellationToken ct, [FromQuery] bool recalculate = true) =>
+        Ok(await _service.OverviewAsync(ct, recalculate));
 
     [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("plans")]
@@ -59,6 +60,46 @@ public sealed class SubscriptionController : ControllerBase
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("users/{userId:guid}/billing-cycle")]
+    public async Task<IActionResult> BillingCycle(Guid userId, [FromBody] BillingCycleRequest req)
+    {
+        try { await _service.SetBillingCycleAsync(userId, req); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("users/{userId:guid}/opening")]
+    public async Task<IActionResult> Opening(Guid userId, [FromBody] OpeningRequest req)
+    {
+        try { await _service.RecordOpeningAsync(userId, req); await _service.SyncSeerrAsync(); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("users/{userId:guid}/banner")]
+    public async Task<IActionResult> UserBanner(Guid userId, [FromBody] UserBannerRequest req)
+    {
+        try { await _service.SetUserBannerAsync(userId, req); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("transactions/{transactionId:guid}/refund")]
+    public async Task<IActionResult> Refund(Guid transactionId, [FromBody] RefundRequest req)
+    {
+        try { await _service.RefundAsync(transactionId, req); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("sync/statuses")]
+    public async Task<IActionResult> SyncStatuses(CancellationToken ct)
+    {
+        await _service.SyncStatusesAsync(ct);
+        return Ok(new { success = true, message = _service.LastManualSyncMessage });
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("settings")]
     public async Task<IActionResult> Settings([FromBody] SettingsRequest req)
     {
@@ -84,9 +125,14 @@ public sealed class SubscriptionController : ControllerBase
 
     [Authorize(Policy = Policies.RequiresElevation)]
     [HttpPost("seerr/test")]
-    public async Task<IActionResult> TestSeerr(CancellationToken ct)
+    public async Task<IActionResult> TestSeerr([FromBody] SeerrTestRequest req, CancellationToken ct)
     {
-        try { return Ok(new { message = await _service.TestSeerrAsync(ct) }); }
+        try
+        {
+            var result = await _service.TestSeerrAsync(req, ct);
+            return Ok(new { message = result.Message, automaticallySaved = result.AutomaticallySaved });
+        }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
         { return StatusCode(502, new { message = "Seerr connection failed: " + ex.Message }); }
     }

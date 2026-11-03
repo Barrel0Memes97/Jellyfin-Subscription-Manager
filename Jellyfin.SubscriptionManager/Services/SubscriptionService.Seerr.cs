@@ -59,21 +59,67 @@ public sealed partial class SubscriptionService
         finally { _seerrGate.Release(); }
     }
 
-    public async Task<string> TestSeerrAsync(CancellationToken ct = default)
+    public async Task<(string Message, bool AutomaticallySaved)> TestSeerrAsync(
+        SeerrTestRequest request, CancellationToken ct = default)
     {
-        SeerrSettings settings;
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        SeerrSettings stored;
+        await _seerrGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            settings = CopySeerrSettings();
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            try { stored = CopySeerrSettings(); }
+            finally { _gate.Release(); }
+
+            var url = (request.Url ?? string.Empty).Trim().TrimEnd('/');
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
+                !string.IsNullOrEmpty(uri.Fragment))
+                throw new ArgumentException("Enter a valid Seerr HTTP(S) base URL before testing");
+            var key = string.IsNullOrWhiteSpace(request.ApiKey) ? stored.ApiKey : request.ApiKey.Trim();
+            if (string.IsNullOrWhiteSpace(key) || key.Length > 512)
+                throw new ArgumentException("Enter a valid Seerr API key before testing");
+            var candidate = new SeerrSettings
+            {
+                Url = url, ApiKey = key, Enabled = request.Enabled,
+                AutoImportUsers = request.AutoImportUsers
+            };
+            using var client = _httpClientFactory.CreateClient("SubscriptionManager.Seerr");
+            // Validate entered values BEFORE changing persisted configuration.
+            using (var response = await SendSeerrAsync(client, candidate, HttpMethod.Get,
+                "/user?take=1&skip=0", null, ct).ConfigureAwait(false))
+                response.EnsureSuccessStatusCode();
+
+            var existingValid = false;
+            if (!string.IsNullOrWhiteSpace(stored.Url) && !string.IsNullOrWhiteSpace(stored.ApiKey))
+            {
+                if (stored.Url == candidate.Url && stored.ApiKey == candidate.ApiKey)
+                    existingValid = true;
+                else
+                {
+                    try
+                    {
+                        using var response = await SendSeerrAsync(client, stored, HttpMethod.Get,
+                            "/user?take=1&skip=0", null, ct).ConfigureAwait(false);
+                        existingValid = response.IsSuccessStatusCode;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (HttpRequestException) { /* Existing credentials not reachable. */ }
+                    catch (TaskCanceledException) { /* Existing credentials timed out. */ }
+                }
+            }
+            if (!existingValid)
+            {
+                await _gate.WaitAsync(ct).ConfigureAwait(false);
+                try { _state.Seerr = candidate; Save(); }
+                finally { _gate.Release(); }
+                _seerrStatusMessage = "Verified and automatically saved Seerr credentials";
+                return ("Seerr connection successful. Credentials were verified and automatically saved.", true);
+            }
+            _seerrStatusMessage = "Seerr test passed (existing valid saved connection kept)";
+            return ("Seerr connection successful. Your existing valid saved settings were not replaced; use Save to change them.", false);
         }
-        finally { _gate.Release(); }
-        if (string.IsNullOrWhiteSpace(settings.Url) || string.IsNullOrWhiteSpace(settings.ApiKey))
-            throw new InvalidOperationException("Save the Seerr URL and API key first.");
-        using var client = _httpClientFactory.CreateClient("SubscriptionManager.Seerr");
-        using var result = await SendSeerrAsync(client, settings, HttpMethod.Get, "/user?take=1&skip=0", null, ct);
-        result.EnsureSuccessStatusCode();
-        return "Seerr connected and authorized (HTTP " + (int)result.StatusCode + ").";
+        finally { _seerrGate.Release(); }
     }
 
     private SeerrSettings CopySeerrSettings() => new()
@@ -142,7 +188,8 @@ public sealed partial class SubscriptionService
                     var plan = _state.Plans.FirstOrDefault(p => p.Id == m.PlanId);
                     var mode = m.Included ? plan?.SeerrRequestAccess ?? "inherit" : "inherit";
                     return new SeerrMember(m.UserId, m.Included,
-                        m.Included && m.PaidThrough is { } through && through >= today,
+                        m.Included && m.PaidThrough is { } through && through >= today &&
+                        (!m.CoverageStartsOn.HasValue || m.CoverageStartsOn.Value <= today),
                         mode, m.SeerrOriginalRequestBits);
                 }).Where(m => (m.Included && m.RequestAccess != "inherit") || m.OriginalBits.HasValue)
                   .ToArray();

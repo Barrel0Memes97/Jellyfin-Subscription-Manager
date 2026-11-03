@@ -15,7 +15,12 @@ export default function SubscriptionManagerController(page) {
       if (value === '' || !/^[-+]?\d+(?:\.\d{1,2})?$/.test(String(value).trim())) throw new Error('Enter an amount with up to two decimal places.');
       return Math.round(Number(value) * 100);
     };
-    const flash = (message, error) => { $('#sm-flash').textContent = message; $('#sm-flash').classList.toggle('sm-error', !!error); };
+    const flash = (message, error) => {
+      const notice = $('#sm-flash');
+      notice.textContent = message;
+      notice.classList.toggle('sm-error', !!error);
+      if (message && !/^(Loading|Saving)\.*/.test(message)) notice.scrollIntoView?.({behavior:'smooth', block:'start'});
+    };
     // Jellyfin 12 may serialize class instances with PascalCase while anonymous
     // controller DTOs use camelCase. Normalize both (including false/0 values).
     const field = (obj, key) => obj?.[key] ?? obj?.[key[0].toUpperCase() + key.slice(1)];
@@ -37,13 +42,19 @@ export default function SubscriptionManagerController(page) {
         administrator:bool(field(u, 'administrator')), disabled:bool(field(u, 'disabled')),
         balanceCents:Number(field(u, 'balanceCents') ?? 0),
         paidThrough:field(u, 'paidThrough') ?? null, nextChargeOn:field(u, 'nextChargeOn') ?? null,
+        billingCycle:field(u,'billingCycle') ?? 'legacy', openingRecorded:bool(field(u,'openingRecorded')),
+        coverageStartsOn:field(u,'coverageStartsOn') ?? null,
+        bannerTitle:field(u,'bannerTitle') ?? '', bannerColor:field(u,'bannerColor') ?? '',
         status:field(u, 'status') ?? 'unknown'
       }));
       const ledger = (field(raw, 'ledger') || []).map(t => ({ ...t,
-        userId:guid(field(t, 'userId')), createdUtc:field(t, 'createdUtc'), kind:field(t, 'kind'),
+        id:guid(field(t,'id')), userId:guid(field(t, 'userId')),
+        refundOf:guid(field(t,'refundOf')), refundable:bool(field(t,'refundable')), refunded:bool(field(t,'refunded')),
+        cashAmountCents:Number(field(t,'cashAmountCents') ?? 0),
+        createdUtc:field(t, 'createdUtc'), kind:field(t, 'kind'),
         amountCents:Number(field(t, 'amountCents') ?? 0),
         balanceAfterCents:Number(field(t, 'balanceAfterCents') ?? 0), note:field(t, 'note') ?? '' }));
-      return { users, plans, ledger, activeCount:field(raw, 'activeCount') ?? 0,
+      return { users, plans, ledger, today:field(raw, 'today') ?? '', activeCount:field(raw, 'activeCount') ?? 0,
         enrolledCount:field(raw, 'enrolledCount') ?? 0,
         totalCollectedCents:field(raw, 'totalCollectedCents') ?? 0,
         totalBalanceCents:field(raw, 'totalBalanceCents') ?? 0,
@@ -101,6 +112,7 @@ export default function SubscriptionManagerController(page) {
         <td><select aria-label="Plan for ${escapeHtml(u.name)}" data-plan="${u.userId}" ${u.administrator ? 'disabled' : ''}>${optionsForPlans(u.planId)}</select></td>
         <td>${usd(u.balanceCents)}</td><td>${escapeHtml(u.paidThrough || '—')}</td>
         <td><span class="sm-status ${escapeHtml(u.status)}">${escapeHtml(u.status)}</span></td>
+        <td>${escapeHtml(u.included ? (u.nextChargeOn || 'Not scheduled') : '—')}</td>
         <td>${u.administrator ? '—' : `<button class="sm-button alt" type="button" data-details="${u.userId}">Configure</button>`}</td>
       </tr>`).join('');
       $('#sm-plans').innerHTML = state.plans.map(p => `<tr>
@@ -116,6 +128,9 @@ export default function SubscriptionManagerController(page) {
       renderLedger();
       updatePayBalance();
       $('#sm-timezone').value = state.timeZoneId;
+      const chosenPreviewUser = $('#sm-b-preview-user').value;
+      $('#sm-b-preview-user').innerHTML = '<option value="">Example user</option>' + state.users
+        .filter(u => !u.administrator).map(u => `<option value="${u.userId}" ${u.userId === chosenPreviewUser ? 'selected' : ''}>${escapeHtml(u.name)}</option>`).join('');
       if (state.banner) renderBannerSettings(state.banner);
       if (state.seerr) renderSeerrSettings(state.seerr);
       if (selectedUser) showDetails(selectedUser, false);
@@ -128,8 +143,12 @@ export default function SubscriptionManagerController(page) {
       $('#sm-ledger').innerHTML = entries.map(t => `<tr>
         <td>${escapeHtml(t.createdUtc?.replace('T', ' ').replace('Z', ' UTC').slice(0, 23))}</td>
         <td>${escapeHtml(userById(t.userId)?.name || t.userId)}</td><td>${escapeHtml(t.kind)}</td>
-        <td>${usd(t.amountCents)}</td><td>${usd(t.balanceAfterCents)}</td><td>${escapeHtml(t.note)}</td>
-      </tr>`).join('') || '<tr><td colspan="6">No transactions found.</td></tr>';
+        <td>${usd(t.amountCents)}</td><td>${usd(t.balanceAfterCents)}</td>
+        <td>${t.cashAmountCents ? usd(t.cashAmountCents) : '—'}</td>
+        <td>${escapeHtml(t.note)}</td>
+        <td><button type="button" class="sm-button alt" data-refund="${t.id}" ${t.refundable ? '' : 'disabled'}
+          title="${t.refundable ? 'Create a linked refund/reversal' : (t.refunded ? 'Already refunded' : 'No refundable amount')}">${t.refunded ? 'Refunded' : 'Refund'}</button></td>
+      </tr>`).join('') || '<tr><td colspan="8">No transactions found.</td></tr>';
     }
     function updatePayBalance() {
       const u = userById($('#sm-pay-user').value);
@@ -144,6 +163,14 @@ export default function SubscriptionManagerController(page) {
       $('#sm-detail-summary').textContent = `Status: ${u.status} | Balance: ${usd(u.balanceCents)} | Next charge: ${u.nextChargeOn || 'not scheduled'}`;
       $('#sm-detail-plan').innerHTML = optionsForPlans(u.planId);
       $('#sm-detail-expiry').value = u.paidThrough || '';
+      $('#sm-detail-cycle').value = u.billingCycle || 'legacy';
+      $('#sm-user-banner-title').value = u.bannerTitle || '';
+      $('#sm-user-banner-color').value = u.bannerColor || '';
+      $('#sm-opening-submit').disabled = u.openingRecorded;
+      $('#sm-opening-submit').textContent = u.openingRecorded ? 'Initial setup already recorded' : 'Record initial subscription';
+      if (!$('#sm-opening-start').value) $('#sm-opening-start').value = state.today || '';
+      if (!$('#sm-opening-through').value) $('#sm-opening-through').value = u.paidThrough || '';
+      previewOpening();
       if (scroll) $('#sm-detail').scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     }
     const bFields = {
@@ -152,7 +179,10 @@ export default function SubscriptionManagerController(page) {
       showUnmanaged:['sm-b-unmanaged','checked'], showAdmins:['sm-b-admins','checked'],
       showUserName:['sm-b-username','checked'], showDaysRemaining:['sm-b-days','checked'],
       showPlan:['sm-b-plan','checked'], showPaidThrough:['sm-b-date','checked'],
-      showBalance:['sm-b-balance','checked'], dismissible:['sm-b-dismiss','checked'],
+      showBalance:['sm-b-balance','checked'], showRenewal:['sm-b-renewal','checked'],
+      dismissible:['sm-b-dismiss','checked'], gradient:['sm-b-gradient','checked'],
+      layout:['sm-b-layout','value'], icon:['sm-b-icon','value'],
+      titleTemplate:['sm-b-title-template','value'],
       position:['sm-b-position','value'], warningDays:['sm-b-warning','number'],
       refreshMinutes:['sm-b-refresh','number'], activeText:['sm-b-active-text','value'],
       expiringText:['sm-b-expiring-text','value'], expiredText:['sm-b-expired-text','value'],
@@ -171,28 +201,102 @@ export default function SubscriptionManagerController(page) {
     function renderBannerSettings(b) {
       Object.entries(bFields).forEach(([name,[id,kind]]) => {
         const element = $('#' + id);
-        if (kind === 'checked') element.checked = !!b[name];
-        else element.value = b[name] ?? '';
+        const value = field(b, name);
+        if (kind === 'checked') element.checked = bool(value);
+        else element.value = value ?? '';
       });
       previewBanner();
+    }
+    function template(message, values) {
+      return String(message || '').replace(/\{(name|plan|status|expiration|daysLeft|renewal|balance)\}/g,
+        (all, key) => String(values[key] ?? '—'));
     }
     function previewBanner() {
       const b = getBannerSettings();
       const status = $('#sm-b-preview-status').value;
-      const color = ({ active:b.activeColor, expiring:b.expiringColor, expired:b.expiredColor, unmanaged:b.unmanagedColor })[status];
-      const title = ({ active:b.activeText, expiring:b.expiringText, expired:b.expiredText, unmanaged:b.unmanagedText })[status];
+      const user = userById($('#sm-b-preview-user').value);
+      const name = user?.name || 'Example User';
+      const plan = planById(user?.planId)?.name || 'Standard';
+      const expiration = user?.paidThrough || '2027-02-26';
+      const values = { name, plan, status, expiration, daysLeft:'5',
+        renewal:user?.nextChargeOn || '2027-02-27', balance:usd(user?.balanceCents ?? 1000) };
+      const base = ({active:b.activeColor, expiring:b.expiringColor, expired:b.expiredColor,
+        unmanaged:b.unmanagedColor})[status] || '#374151';
+      const color = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(user?.bannerColor || '') ? user.bannerColor : base;
+      const message = ({active:b.activeText, expiring:b.expiringText, expired:b.expiredText,
+        unmanaged:b.unmanagedText})[status] || 'Subscription';
+      const title = user?.bannerTitle || b.titleTemplate || 'Welcome, {name}!';
       const el = $('#sm-b-preview');
-      el.style.backgroundColor = color;
+      el.style.background = b.gradient ? `linear-gradient(110deg, ${color}, rgba(25,25,30,.95))` : color;
+      el.style.borderLeftColor = '#fff';
       el.replaceChildren();
-      const strong = document.createElement('strong');
-      strong.textContent = (b.showUserName ? 'Example User: ' : '') + title;
-      el.appendChild(strong);
-      const detail = document.createElement('div');
-      detail.style.fontSize = '13px';
-      detail.style.marginTop = '5px';
-      detail.textContent = [b.showPlan ? 'Plan: Example' : '', b.showPaidThrough ? 'Paid through: 2026-12-15' : '',
-        b.showBalance ? 'Credit: $10.00' : ''].filter(Boolean).join(' · ');
-      el.appendChild(detail);
+      const icon = document.createElement('span');
+      icon.className = 'sm-preview-icon'; icon.textContent = b.icon || '👋';
+      const body = document.createElement('div');
+      const head = document.createElement('div');
+      head.className = 'sm-preview-title';
+      head.textContent = template(b.showUserName ? title : title.replace(/\{name\}/g,'Subscriber'), values);
+      const sub = document.createElement('div');
+      sub.className = 'sm-preview-message';
+      const lines = [template(message, values)];
+      if (b.showPlan) lines.push('Plan: ' + values.plan);
+      if (b.showPaidThrough) lines.push('Paid through: ' + values.expiration);
+      if (b.showRenewal) lines.push('Renews: ' + values.renewal);
+      if (b.showBalance) lines.push('Credit: ' + values.balance);
+      if (b.showDaysRemaining && status === 'expiring') lines.push(values.daysLeft + ' days left');
+      sub.textContent = lines.join(' · ');
+      body.appendChild(head); body.appendChild(sub);
+      el.appendChild(icon); el.appendChild(body);
+      if (b.dismissible) {
+        const close = document.createElement('span');
+        close.className = 'sm-preview-close'; close.textContent = '×';
+        el.appendChild(close);
+      }
+    }
+    function fridayInMonth(year, monthIndex, mode) {
+      const first = new Date(year, monthIndex, 1, 12);
+      if (mode === 'firstFriday') return 1 + (5 - first.getDay() + 7) % 7;
+      const last = new Date(year, monthIndex + 1, 0, 12);
+      return last.getDate() - (last.getDay() - 5 + 7) % 7;
+    }
+    function nextOpeningBoundary(date, cycle, anchor) {
+      if (cycle === 'legacy') {
+        const next = new Date(date.getFullYear(), date.getMonth() + 1, 1, 12);
+        const max = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(anchor, max)); return next;
+      }
+      const month = new Date(date.getFullYear(), date.getMonth() + 1, 1, 12);
+      return new Date(month.getFullYear(), month.getMonth(), fridayInMonth(month.getFullYear(),month.getMonth(),cycle),12);
+    }
+    function formatDay(date) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    }
+    function previewOpening() {
+      const mode = $('#sm-opening-credit-toggle').checked ? 'credit' : 'paidThrough';
+      $('#sm-opening-through-wrap').hidden = mode === 'credit';
+      $('#sm-opening-credit-wrap').hidden = mode !== 'credit';
+      const startStr = $('#sm-opening-start').value;
+      const start = startStr ? new Date(startStr + 'T12:00:00') : null;
+      const user = userById(selectedUser);
+      const plan = planById(user?.planId);
+      const output = $('#sm-opening-preview');
+      if (!user || !start || Number.isNaN(start.getTime())) { output.textContent = 'Choose a starting date.'; return; }
+      if (mode === 'paidThrough') {
+        const thru = $('#sm-opening-through').value;
+        output.textContent = thru ? `Coverage: ${startStr} through ${thru} (inclusive). First payment is historical, not spendable credit.` : 'Choose the paid-through date.';
+        return;
+      }
+      try {
+        if (!plan || plan.monthlyCents <= 0) { output.textContent = 'Assign a paid monthly plan before calculating months.'; return; }
+        const amount = cents($('#sm-opening-credit').value || '0');
+        if (amount < 0) throw new Error('Credit cannot be negative.');
+        const months = Math.floor(amount / plan.monthlyCents);
+        if (months > 120) throw new Error('Maximum 120 prepaid months.');
+        let end = new Date(start);
+        for (let i = 0; i < months; i++) end = nextOpeningBoundary(end, user.billingCycle, start.getDate());
+        if (months) end.setDate(end.getDate() - 1);
+        output.textContent = `${months} full month(s); ${months ? 'paid through ' + formatDay(end) : 'no months prepaid'}; remaining account credit ${usd(amount - months * plan.monthlyCents)}.`;
+      } catch (e) { output.textContent = e.message; }
     }
     function renderSeerrSettings(settings) {
       $('#sm-seerr-enabled').checked = bool(field(settings, 'enabled'));
@@ -208,8 +312,8 @@ export default function SubscriptionManagerController(page) {
       if (data !== undefined) { config.contentType = 'application/json'; config.data = JSON.stringify(data); }
       return ApiClient.ajax(config);
     }
-    async function refresh(message) {
-      state = normalizeOverview(await api('overview'));
+    async function refresh(message, recalculate = true) {
+      state = normalizeOverview(await api('overview?recalculate=' + String(recalculate)));
       render();
       if (message) flash(message, false);
     }
@@ -250,10 +354,31 @@ export default function SubscriptionManagerController(page) {
         const planId = $('#sm-detail-plan').value || null;
         try { await invoke('users/' + selectedUser, { included: u.included, planId }, 'User plan saved.'); } catch (_) { }
       }
+      if (target.id === 'sm-sync-statuses') {
+        try {
+          flash('Updating Jellyfin and Seerr permissions...', false);
+          const result = await api('sync/statuses', {});
+          await refresh(field(result,'message') || 'Status sync completed without billing charges.', false);
+        } catch (e) { flash(getError(e), true); }
+      }
+      if (target.dataset.refund) {
+        const entry = state?.ledger.find(t => t.id === guid(target.dataset.refund));
+        if (!entry?.refundable) return;
+        if (!confirm(`Refund/reverse ${entry.kind} for ${userById(entry.userId)?.name || 'this user'}? Account balance changes by ${usd(-entry.amountCents)}. Paid-through coverage will NOT be automatically changed.`)) return;
+        try { await invoke('transactions/' + entry.id + '/refund', {note:'Refund entered from transaction history'}, 'Refund/reversal recorded in history.'); }
+        catch (_) { }
+      }
       if (target.id === 'sm-export') exportCsv();
       if (target.id === 'sm-seerr-test') {
-        try { const result = await api('seerr/test', {}); flash(field(result, 'message') || 'Seerr connection succeeded.'); }
-        catch (e) { flash('Seerr connection failed: ' + getError(e), true); }
+        flash('Testing Seerr connection...', false);
+        try {
+          const result = await api('seerr/test', {
+            url:$('#sm-seerr-url').value.trim(), apiKey:$('#sm-seerr-key').value.trim(),
+            enabled:$('#sm-seerr-enabled').checked, autoImportUsers:$('#sm-seerr-import').checked
+          });
+          if (field(result,'automaticallySaved')) await refresh();
+          flash(field(result, 'message') || 'Seerr connection succeeded.', false);
+        } catch (e) { flash('Seerr connection failed: ' + getError(e), true); }
       }
       if (target.id === 'sm-seerr-sync') {
         try { const result = await api('seerr/sync', {}); await refresh(field(result, 'message') || 'Seerr sync completed.'); }
@@ -276,6 +401,8 @@ export default function SubscriptionManagerController(page) {
       if (t.id === 'sm-pay-user') updatePayBalance();
       if (t.id === 'sm-ledger-user') renderLedger();
       if (t.id === 'sm-pay-mode') { $('#sm-pay-amount').min = t.value === 'adjustments' ? '-1000000' : '0.01'; }
+      if (t.id === 'sm-opening-credit-toggle') previewOpening();
+      if (t.id === 'sm-b-preview-user') previewBanner();
     });
     $('#sm-plan-form').addEventListener('submit', async ev => {
       ev.preventDefault();
@@ -307,6 +434,35 @@ export default function SubscriptionManagerController(page) {
       if (!confirm(`Override this user's paid-through date to ${value || 'none'}?`)) return;
       try { await invoke('users/' + selectedUser + '/expiration', { paidThrough: value || null, note: 'Manual date override from admin UI' }, 'Subscription date saved.'); } catch (_) { }
     });
+    $('#sm-cycle-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!selectedUser) return;
+      try { await invoke('users/' + selectedUser + '/billing-cycle', {cycle:$('#sm-detail-cycle').value}, 'User billing cycle saved.'); }
+      catch (_) { }
+    });
+    $('#sm-opening-form').addEventListener('input', previewOpening);
+    $('#sm-opening-form').addEventListener('change', previewOpening);
+    $('#sm-opening-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!selectedUser) return;
+      const mode = $('#sm-opening-credit-toggle').checked ? 'credit' : 'paidThrough';
+      try {
+        const payload = { mode, startDate:$('#sm-opening-start').value,
+          paidThrough:mode === 'paidThrough' ? $('#sm-opening-through').value || null : null,
+          firstPaymentCents:cents($('#sm-opening-payment').value || '0'),
+          startingCreditCents:mode === 'credit' ? cents($('#sm-opening-credit').value || '0') : 0,
+          note:'Initial subscription setup' };
+        if (!confirm('Record the opening subscription? This is a ONE-TIME operation and will add ledger entries.')) return;
+        await invoke('users/' + selectedUser + '/opening', payload, 'First payment and opening coverage recorded.');
+      } catch (e) { if (!e?.status) flash(e?.message || 'Opening setup failed.', true); }
+    });
+    $('#sm-user-banner-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!selectedUser) return;
+      try { await invoke('users/' + selectedUser + '/banner', {
+        title:$('#sm-user-banner-title').value, color:$('#sm-user-banner-color').value
+      }, 'Personal banner saved.'); } catch (_) { }
+    });
     $('#sm-settings-form').addEventListener('submit', async ev => {
       ev.preventDefault();
       try { await invoke('settings', { timeZoneId: $('#sm-timezone').value.trim() }, 'Billing time zone saved.'); } catch (_) { }
@@ -326,9 +482,10 @@ export default function SubscriptionManagerController(page) {
       const chosen = $('#sm-ledger-user').value;
       const records = state.ledger.filter(t => !chosen || t.userId === chosen);
       const csvEscape = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
-      const lines = [['DateUTC', 'User', 'Kind', 'AmountUSD', 'BalanceAfterUSD', 'Note'],
+      const lines = [['DateUTC', 'User', 'Kind', 'AccountChangeUSD', 'BalanceAfterUSD', 'CashMovementUSD', 'Note', 'RefundOf'],
         ...records.map(t => [t.createdUtc, userById(t.userId)?.name || t.userId, t.kind,
-          (t.amountCents / 100).toFixed(2), (t.balanceAfterCents / 100).toFixed(2), t.note])];
+          (t.amountCents / 100).toFixed(2), (t.balanceAfterCents / 100).toFixed(2),
+          (t.cashAmountCents / 100).toFixed(2), t.note, t.refundOf || ''])];
       const blob = new Blob([lines.map(r => r.map(csvEscape).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob); const a = document.createElement('a');
       a.href = url; a.download = 'jellyfin-subscription-transactions.csv'; a.click(); URL.revokeObjectURL(url);
@@ -340,6 +497,7 @@ export default function SubscriptionManagerController(page) {
     });
     $('#sm-banner-form').addEventListener('input', previewBanner);
     $('#sm-b-preview-status').addEventListener('change', previewBanner);
+    $('#sm-b-preview-user').addEventListener('change', previewBanner);
     // Jellyfin 12 fires viewshow every time a page is presented. The legacy
     // pageshow event may fire immediately afterwards. Coalesce the two events.
     let refreshPromise = null;

@@ -1,148 +1,162 @@
-/* Subscription Manager browser banner. No third-party JavaScript injector required.
- * Only displayed to an authenticated user and only contains that user's data.
- * Jellyfin Web only; native TV/mobile clients will not display this UI. */
+/* Subscription Manager banner for Jellyfin Web. Mirrors the original personal welcome
+ * design: home-page insertion, gradient, wave emoji, left accent, and close control.
+ * Only /SubscriptionManager/me (authenticated current user) is ever requested. */
 (() => {
   'use strict';
   if (window.__jellyfinSubscriptionBannerLoaded) return;
   window.__jellyfinSubscriptionBannerLoaded = true;
   const script = document.currentScript;
   const endpoint = script?.src ? new URL('me', script.src).toString() : null;
-  const bannerId = 'sm-user-banner';
-  const styleId = 'sm-user-banner-css';
-  let inFlight = false;
+  const bannerId = 'jf-personalized-user-banner';
+  const styleId = 'jf-subscription-banner-style';
   let lastRefresh = 0;
-  let refreshMs = 5 * 60 * 1000;
   let dismissedUntil = 0;
-
-  const getClient = () => window.ApiClient || window.apiClient;
-  const money = cents => (cents / 100).toLocaleString(undefined, {
-    style: 'currency', currency: 'USD'
-  });
-
-  function removeBanner() { document.getElementById(bannerId)?.remove(); }
+  let refreshMs = 5 * 60000;
+  let requestInFlight = false;
+  let lastIdentity = null;
+  let lastData = null;
+  const api = () => window.ApiClient || window.apiClient;
+  const cash = value => new Intl.NumberFormat('en-US', { style:'currency', currency:'USD' }).format(value / 100);
+  const field = (object, key) => object?.[key] ?? object?.[key[0].toUpperCase() + key.slice(1)];
+  const format = (value, substitutions) => String(value || '').replace(/\{(name|plan|status|expiration|daysLeft|renewal|balance)\}/g,
+    (_, key) => String(substitutions[key] ?? '—'));
+  const isLogin = () => /(?:login|selectserver|selectuser)/i.test(location.hash) ||
+    !!document.querySelector('.loginPage:not(.hide), #loginPage:not(.hide)');
+  const onHome = () => /(?:^|[/#])home(?:[/?#]|$)/i.test(location.hash) ||
+    !!document.querySelector('.homePage:not(.hide), .homePageMain:not(.hide)');
+  const homeNode = () => {
+    const selectors = ['.homePageMain', '.homePage', '.homeSectionsContainer', '.mainAnimatedPage'];
+    return selectors.map(s => document.querySelector(s)).find(el => el && !el.classList.contains('hide') &&
+      !el.closest('.hide, [hidden]')) || null;
+  };
+  const remove = () => document.getElementById(bannerId)?.remove();
 
   function installCss() {
     if (document.getElementById(styleId)) return;
-    const css = document.createElement('style');
-    css.id = styleId;
-    css.textContent = `
-      #${bannerId} {position:fixed;z-index:9999;left:50%;transform:translateX(-50%);
-        width:min(850px,calc(100vw - 24px));box-sizing:border-box;
-        box-shadow:0 6px 24px #0006;border:1px solid #ffffff35;border-radius:12px;
-        color:#fff;padding:11px 48px 11px 17px;line-height:1.45;
-        font-family:inherit;font-size:14px;pointer-events:auto;}
-      #${bannerId}[data-position="top"] {top:max(78px,env(safe-area-inset-top));}
-      #${bannerId}[data-position="bottom"] {bottom:max(18px,env(safe-area-inset-bottom));}
-      #${bannerId} .sm-banner-title {font-weight:700;font-size:15px;display:block;}
-      #${bannerId} .sm-banner-detail {font-size:13px;opacity:.94;display:flex;gap:5px 12px;flex-wrap:wrap;}
-      #${bannerId} .sm-banner-close {position:absolute;top:8px;right:8px;color:inherit;
-        border:0;background:#ffffff2a;border-radius:50%;cursor:pointer;
-        width:30px;height:30px;font-size:20px;line-height:25px;}
-      @media (max-width:650px) {#${bannerId}[data-position="top"] {top:max(68px,env(safe-area-inset-top));}}
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      #${bannerId} {box-sizing:border-box; width:calc(100% - 32px);max-width:800px;
+        min-height:58px; margin:12px auto 8px; display:flex;gap:12px;align-items:center;
+        position:relative;padding:13px 44px 13px 15px; border-radius:10px;
+        border-left:5px solid rgba(255,255,255,.96);font-family:inherit;
+        color:#fff;line-height:1.42;box-shadow:0 5px 20px #0007;
+        opacity:1;transition:opacity .18s ease,transform .18s ease;}
+      #${bannerId} .jf-banner-content { display:flex;gap:12px;align-items:center;min-width:0; }
+      #${bannerId} .jf-banner-icon { font-size:24px;flex-shrink:0; }
+      #${bannerId} .jf-banner-text { min-width:0; }
+      #${bannerId} .jf-banner-title { font-size:16px;font-weight:700; }
+      #${bannerId} .jf-banner-message { font-size:13px;opacity:.87;margin-top:3px; }
+      #${bannerId} .jf-banner-extra { font-size:12px;opacity:.87;margin-top:4px;
+        display:flex;flex-wrap:wrap;gap:4px 14px; }
+      #${bannerId} .jf-banner-close {position:absolute;right:10px;top:10px;
+        border:0;border-radius:50%;width:28px;height:28px;background:#ffffff30;
+        color:#fff;font-size:20px;line-height:26px;cursor:pointer;
+        transition:transform .15s ease,background-color .15s ease;}
+      #${bannerId} .jf-banner-close:hover {background:#ffffff55;transform:scale(1.08);}
+      #${bannerId}.jf-floating {position:fixed;left:50%;transform:translateX(-50%);
+        width:min(800px,calc(100vw - 32px));margin:0;z-index:9999;}
+      #${bannerId}.jf-floating[data-position="top"] {top:max(72px,env(safe-area-inset-top));}
+      #${bannerId}.jf-floating[data-position="bottom"] {bottom:max(16px,env(safe-area-inset-bottom));}
+      @media(max-width:650px){#${bannerId}{margin:9px auto;padding:12px 38px 12px 12px;gap:8px;}
+        #${bannerId} .jf-banner-icon{font-size:20px;}#${bannerId} .jf-banner-title{font-size:15px;}}
     `;
-    document.head.appendChild(css);
+    document.head.appendChild(style);
   }
 
-  function isLoginView() {
-    return /(?:login|selectserver|selectuser)/i.test(location.hash) ||
-      !!document.querySelector('.loginPage:not(.hide), #loginPage:not(.hide)');
-  }
-
-  function show(data) {
-    const client = getClient();
-    if (isLoginView() || !data?.show || !client || (typeof client.getCurrentUserId === 'function' && !client.getCurrentUserId()) || Date.now() < dismissedUntil) {
-      removeBanner();
-      return;
-    }
-    installCss();
+  function render(data) {
+    lastData = data;
+    if (!data?.show || isLogin() || Date.now() < dismissedUntil) { remove(); return; }
     const a = data.appearance || {};
-    const color = ({active:a.activeColor, expiring:a.expiringColor,
-      expired:a.expiredColor, unmanaged:a.unmanagedColor})[data.status] || '#374151';
-    const title = ({active:a.activeText, expiring:a.expiringText,
-      expired:a.expiredText, unmanaged:a.unmanagedText})[data.status] || 'Subscription status';
-    let el = document.getElementById(bannerId);
-    if (!el) {
-      el = document.createElement('section');
-      el.id = bannerId;
-      el.setAttribute('role', 'status');
-      el.setAttribute('aria-live', 'polite');
-      document.body.appendChild(el);
+    const floating = field(a, 'layout') === 'floating';
+    const home = !floating ? homeNode() : null;
+    if (!floating && (!onHome() || !home)) { remove(); return; }
+    installCss();
+    const colors = {active:field(a,'activeColor'),expiring:field(a,'expiringColor'),
+      expired:field(a,'expiredColor'),unmanaged:field(a,'unmanagedColor')};
+    const base = colors[data.status] || '#3b82f6';
+    const color = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(data.customColor || '') ? data.customColor : base;
+    const message = {active:field(a,'activeText'),expiring:field(a,'expiringText'),
+      expired:field(a,'expiredText'),unmanaged:field(a,'unmanagedText')}[data.status] || 'Subscription information';
+    const values = {
+      name:data.userName || 'Subscriber',plan:data.plan || '—',status:data.status,
+      expiration:data.paidThrough || '—',daysLeft:data.daysRemaining ?? '—',
+      renewal:data.renewalOn || '—',balance:typeof data.balanceCents === 'number' ? cash(data.balanceCents) : '—'
+    };
+    let banner = document.getElementById(bannerId);
+    if (!banner) { banner = document.createElement('section'); banner.id = bannerId;
+      banner.setAttribute('role','status'); banner.setAttribute('aria-live','polite'); }
+    banner.className = floating ? 'jf-floating' : '';
+    banner.dataset.position = field(a,'position') === 'bottom' ? 'bottom' : 'top';
+    banner.style.background = field(a,'gradient') !== false
+      ? `linear-gradient(110deg,${color},rgba(25,25,30,.95))` : color;
+    banner.style.boxShadow = `0 6px 24px #0007, 0 2px 16px ${color}44`;
+    banner.replaceChildren();
+    const content = document.createElement('div'); content.className = 'jf-banner-content';
+    const icon = document.createElement('span'); icon.className = 'jf-banner-icon';
+    icon.textContent = field(a,'icon') || '👋'; content.appendChild(icon);
+    const text = document.createElement('div'); text.className = 'jf-banner-text';
+    const heading = document.createElement('div'); heading.className = 'jf-banner-title';
+    heading.textContent = format(data.customTitle || field(a,'titleTemplate') || 'Welcome, {name}!', values);
+    text.appendChild(heading);
+    const sub = document.createElement('div'); sub.className = 'jf-banner-message';
+    sub.textContent = format(message, values);
+    text.appendChild(sub);
+    const extras = [];
+    if (data.plan) extras.push('Plan: ' + data.plan);
+    if (data.paidThrough) extras.push('Paid through: ' + data.paidThrough);
+    if (data.renewalOn) extras.push('Next renewal: ' + data.renewalOn);
+    if (typeof data.balanceCents === 'number') extras.push('Credit: ' + cash(data.balanceCents));
+    if (extras.length) {
+      const detail = document.createElement('div'); detail.className = 'jf-banner-extra';
+      for (const part of extras) { const span = document.createElement('span'); span.textContent = part; detail.appendChild(span); }
+      text.appendChild(detail);
     }
-    el.dataset.position = a.position === 'bottom' ? 'bottom' : 'top';
-    el.style.backgroundColor = /^#[0-9a-f]{6}$/i.test(color) ? color : '#374151';
-    el.replaceChildren();
-    const heading = document.createElement('strong');
-    heading.className = 'sm-banner-title';
-    heading.textContent = data.userName ? `${data.userName}: ${title}` : title;
-    el.appendChild(heading);
-    const detail = document.createElement('div');
-    detail.className = 'sm-banner-detail';
-    const parts = [];
-    if (data.plan) parts.push('Plan: ' + data.plan);
-    if (data.paidThrough) parts.push('Paid through: ' + data.paidThrough);
-    if (data.status === 'expiring' && Number.isInteger(data.daysRemaining)) {
-      parts.push(data.daysRemaining === 0 ? 'Expires today' :
-        `${data.daysRemaining} day${data.daysRemaining === 1 ? '' : 's'} remaining`);
-    }
-    if (typeof data.balanceCents === 'number') parts.push('Credit: ' + money(data.balanceCents));
-    for (const part of parts) {
-      const span = document.createElement('span');
-      span.textContent = part;
-      detail.appendChild(span);
-    }
-    el.appendChild(detail);
-    if (a.dismissible) {
-      const close = document.createElement('button');
-      close.className = 'sm-banner-close';
-      close.setAttribute('aria-label', 'Dismiss subscription notice');
-      close.type = 'button';
-      close.textContent = '×';
-      close.addEventListener('click', () => {
-        dismissedUntil = Date.now() + refreshMs;
-        removeBanner();
+    content.appendChild(text); banner.appendChild(content);
+    refreshMs = Math.max(1, Math.min(120, Number(field(a, 'refreshMinutes')) || 5)) * 60000;
+    if (field(a, 'dismissible') !== false) {
+      const dismiss = document.createElement('button'); dismiss.className = 'jf-banner-close';
+      dismiss.type = 'button'; dismiss.textContent = '×'; dismiss.setAttribute('aria-label','Dismiss subscription notice');
+      dismiss.addEventListener('click', () => {
+        dismissedUntil = Date.now() + refreshMs; banner.style.opacity = '0';
+        banner.style.transform = floating ? 'translate(-50%,-6px)' : 'translateY(-6px)';
+        window.setTimeout(remove, 185);
       });
-      el.appendChild(close);
+      banner.appendChild(dismiss);
     }
-    refreshMs = Math.max(1, Math.min(120, Number(a.refreshMinutes) || 5)) * 60000;
+    if (floating && banner.parentElement !== document.body) document.body.appendChild(banner);
+    else if (home && (banner.parentElement !== home || home.firstElementChild !== banner)) home.prepend(banner);
   }
 
   async function refresh(force = false) {
-    const now = Date.now();
-    if (inFlight || !endpoint || (!force && now - lastRefresh < refreshMs)) return;
-    const client = getClient();
-    if (!client || (typeof client.getCurrentUserId === 'function' && !client.getCurrentUserId()) || typeof client.ajax !== 'function') {
-      removeBanner();
-      return;
+    const client = api();
+    const identity = typeof client?.getCurrentUserId === 'function' ? client.getCurrentUserId() : null;
+    if (identity !== lastIdentity) { remove(); lastData = null; lastRefresh = 0; lastIdentity = identity; }
+    if (isLogin() || !client || !identity || typeof client.ajax !== 'function') { remove(); return; }
+    if (!endpoint || requestInFlight || (!force && Date.now() - lastRefresh < refreshMs)) {
+      if (lastData) render(lastData); return;
     }
-    inFlight = true;
-    lastRefresh = now;
-    try {
-      // ApiClient supplies the current Jellyfin user's access token.
-      const response = await client.ajax({type:'GET',url:endpoint,dataType:'json'});
-      show(response);
-    } catch (_) {
-      removeBanner(); // no account details are displayed on auth/network failure
-    } finally {
-      inFlight = false;
-    }
+    requestInFlight = true;
+    lastRefresh = Date.now();
+    try { render(await client.ajax({type:'GET',url:endpoint,dataType:'json'})); }
+    catch (_) { lastData = null; remove(); }
+    finally { requestInFlight = false; }
   }
 
-  // Jellyfin Web is a single-page application. Refresh on route/user changes.
-  window.addEventListener('pageshow', () => refresh(true));
-  window.addEventListener('popstate', () => refresh(true));
-  window.addEventListener('hashchange', () => { if (isLoginView()) removeBanner(); else refresh(true); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-  const observer = new MutationObserver(() => {
-    if (!document.hidden && Date.now() - lastRefresh > refreshMs) refresh();
-  });
   function start() {
-    if (document.body) observer.observe(document.body, {childList:true,subtree:false});
+    if (document.body) {
+      const observer = new MutationObserver(() => {
+        if (!document.hidden && lastData && !isLogin() && !document.getElementById(bannerId)) render(lastData);
+      });
+      observer.observe(document.body,{childList:true,subtree:false});
+    }
+    window.addEventListener('hashchange', () => { remove(); refresh(true); });
+    window.addEventListener('popstate', () => refresh(true));
+    window.addEventListener('pageshow', () => refresh(true));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(true); });
+    window.setInterval(() => refresh(), 10000);
     refresh(true);
-    window.setInterval(() => {
-      if (isLoginView()) removeBanner();
-      else refresh();
-    }, 10000);
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, {once:true});
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start,{once:true});
   else start();
 })();
