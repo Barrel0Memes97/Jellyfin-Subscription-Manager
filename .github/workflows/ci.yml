@@ -1,0 +1,32 @@
+name: Build and validate
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify .NET SDK
+        run: dotnet --info
+      - name: Restore
+        run: dotnet restore Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csproj
+      - name: Compile plugin
+        run: dotnet build Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csproj -c Release --no-restore
+      - name: Validate release manifest generator
+        run: python3 -m unittest discover -s tests -v
+      - name: Upload DLL for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubscriptionManager-ci-dll
+          path: Jellyfin.SubscriptionManager/bin/Release/net10.0/Jellyfin.Plugin.SubscriptionManager.dll
+          if-no-files-found: error

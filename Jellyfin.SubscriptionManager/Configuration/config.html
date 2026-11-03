@@ -1,0 +1,385 @@
+<div id="subscriptionManagerPage" data-role="page" class="page type-interior pluginConfigurationPage">
+  <style>
+    #subscriptionManagerPage .sm-shell { max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+    #subscriptionManagerPage .sm-title { font-size: 1.9rem; font-weight: 700; margin: 0 0 .25rem; }
+    #subscriptionManagerPage .sm-muted { color: var(--secondary-text-color, #aaa); }
+    #subscriptionManagerPage .sm-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin: 20px 0; }
+    #subscriptionManagerPage .sm-metric { background: var(--card-background, #292929); border: 1px solid #5555; border-radius: 10px; padding: 16px; }
+    #subscriptionManagerPage .sm-metric strong { display: block; margin-top: 4px; font-size: 1.6rem; }
+    #subscriptionManagerPage .sm-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid #7775; gap: 6px; margin: 15px 0 20px; }
+    #subscriptionManagerPage .sm-tab { color: inherit; background: none; border: 0; border-bottom: 3px solid transparent; font: inherit; padding: 12px 16px; cursor: pointer; }
+    #subscriptionManagerPage .sm-tab[aria-selected="true"] { border-bottom-color: #00a4dc; color: #00bdf8; }
+    #subscriptionManagerPage .sm-panel[hidden] { display: none !important; }
+    #subscriptionManagerPage .sm-box { border: 1px solid #6665; background: var(--card-background, #292929); border-radius: 12px; margin: 16px 0; padding: 18px; }
+    #subscriptionManagerPage .sm-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px; }
+    #subscriptionManagerPage .sm-scroll { overflow: auto; max-width: 100%; }
+    #subscriptionManagerPage table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+    #subscriptionManagerPage th, #subscriptionManagerPage td { text-align: left; border-bottom: 1px solid #7774; padding: 11px 10px; }
+    #subscriptionManagerPage th { font-weight: 600; color: var(--secondary-text-color, #bbb); }
+    #subscriptionManagerPage input, #subscriptionManagerPage select { color: inherit; width: 100%; box-sizing: border-box; background: var(--input-background, #333); border: 1px solid #7779; padding: 10px; border-radius: 6px; }
+    #subscriptionManagerPage input[type=checkbox] { width: 20px; height: 20px; accent-color: #00a4dc; }
+    #subscriptionManagerPage label { display: block; margin: 8px 0 5px; }
+    #subscriptionManagerPage .sm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
+    #subscriptionManagerPage .sm-button { cursor: pointer; border-radius: 7px; border: 1px solid #00a4dc; background: #007ba6; padding: 10px 15px; color: white; }
+    #subscriptionManagerPage .sm-button.alt { border-color: #777; background: transparent; color: inherit; }
+    #subscriptionManagerPage .sm-button:disabled { opacity: .5; cursor: default; }
+    #subscriptionManagerPage .sm-status { border-radius: 999px; padding: 4px 10px; background: #7773; font-size: .85rem; text-transform: capitalize; }
+    #subscriptionManagerPage .sm-status.active { background: #15803d44; color: #4ade80; }
+    #subscriptionManagerPage .sm-status.expired { background: #b91c1c33; color: #fb7185; }
+    #subscriptionManagerPage .sm-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    #subscriptionManagerPage .sm-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    #subscriptionManagerPage .sm-hint { font-size: .9rem; color: var(--secondary-text-color, #aaa); margin: 8px 0; }
+    #subscriptionManagerPage #sm-flash:not(:empty) { padding: 10px 13px; background: #157fa522; border: 1px solid #157fa599; border-radius: 6px; margin-top: 15px; }
+    #subscriptionManagerPage #sm-flash.sm-error { background: #ba303022; border-color: #ba3030aa; }
+    #subscriptionManagerPage h2 { font-size: 1.25rem; margin: 0 0 14px; }
+  </style>
+  <div class="sm-shell">
+    <h1 class="sm-title">Subscription Manager</h1>
+    <p class="sm-muted">Manage users, monthly plans, prepaid funds, and Jellyfin access.</p>
+    <div id="sm-flash" role="status" aria-live="polite"></div>
+    <div class="sm-metrics" id="sm-metrics"></div>
+    <nav class="sm-tabs" aria-label="Subscription Manager sections">
+      <button class="sm-tab" type="button" data-tab="users" aria-selected="true">Users</button>
+      <button class="sm-tab" type="button" data-tab="plans" aria-selected="false">Plans</button>
+      <button class="sm-tab" type="button" data-tab="payments" aria-selected="false">Add funds</button>
+      <button class="sm-tab" type="button" data-tab="transactions" aria-selected="false">Transactions</button>
+      <button class="sm-tab" type="button" data-tab="banner" aria-selected="false">Banner</button>
+      <button class="sm-tab" type="button" data-tab="settings" aria-selected="false">Settings</button>
+    </nav>
+    <section class="sm-panel" id="sm-panel-users">
+      <div class="sm-toolbar"><h2>Jellyfin users</h2><button class="sm-button alt" type="button" id="sm-refresh">Refresh users &amp; billing</button></div>
+      <p class="sm-hint">Everyone is discovered automatically. Only accounts you explicitly include are managed. Administrators cannot be enrolled.</p>
+      <div class="sm-scroll sm-box"><table><thead><tr><th>User</th><th>Managed</th><th>Plan</th><th>Balance</th><th>Paid through</th><th>Status</th><th>Details</th></tr></thead><tbody id="sm-users"></tbody></table></div>
+      <div id="sm-detail" class="sm-box" hidden>
+        <div class="sm-toolbar"><h2 id="sm-detail-name">User settings</h2><button class="sm-button alt" id="sm-close-detail" type="button">Close</button></div>
+        <div id="sm-detail-summary" class="sm-hint"></div>
+        <form id="sm-detail-form">
+          <div class="sm-grid"><div><label for="sm-detail-plan">Subscription plan</label><select id="sm-detail-plan"></select></div><div><label for="sm-detail-expiry">Manually set paid-through date</label><input id="sm-detail-expiry" type="date" /></div></div>
+          <p class="sm-hint">A manual date override can import the expiration date from the old banner. Access stays active through the date shown; billing resumes the next day. An empty date clears prepaid coverage.</p>
+          <div class="sm-inline"><button class="sm-button" type="button" id="sm-save-plan">Save plan</button><button class="sm-button alt" type="submit">Save expiration override</button></div>
+        </form>
+      </div>
+    </section>
+    <section class="sm-panel" id="sm-panel-plans" hidden>
+      <div class="sm-box"><h2 id="sm-plan-editor-title">Create a plan</h2>
+        <form id="sm-plan-form"><input id="sm-plan-id" type="hidden" />
+          <div class="sm-grid"><div><label for="sm-plan-name">Plan name</label><input id="sm-plan-name" placeholder="Standard" maxlength="80" required /></div><div><label for="sm-plan-price">Monthly cost (USD)</label><input id="sm-plan-price" type="number" min="0" max="1000000" step="0.01" value="5.00" required /></div><div><label><input id="sm-plan-enabled" type="checkbox" checked /> Available for new subscribers</label></div></div>
+          <div class="sm-inline"><button class="sm-button" type="submit">Save plan</button><button class="sm-button alt" type="button" id="sm-plan-new">New plan</button></div>
+        </form>
+        <p class="sm-hint">Changing a price affects future renewals, not months already paid for. Hiding a plan does not cancel existing subscribers.</p>
+      </div>
+      <div class="sm-box sm-scroll"><table><thead><tr><th>Name</th><th>Monthly price</th><th>Available</th><th>Subscribers</th><th></th></tr></thead><tbody id="sm-plans"></tbody></table></div>
+    </section>
+    <section class="sm-panel" id="sm-panel-payments" hidden>
+      <div class="sm-box"><h2>Credit an account</h2><form id="sm-payment-form">
+        <div class="sm-grid"><div><label for="sm-pay-user">Jellyfin user</label><select id="sm-pay-user" required></select></div><div><label for="sm-pay-mode">Transaction</label><select id="sm-pay-mode"><option value="payments">Payment received</option><option value="adjustments">Balance correction (+ or -)</option></select></div><div><label for="sm-pay-amount">Amount (USD)</label><input id="sm-pay-amount" type="number" step="0.01" min="0.01" placeholder="10.00" required /></div></div>
+        <div><label for="sm-pay-note">Note (optional for payments)</label><input id="sm-pay-note" maxlength="250" placeholder="Cash, Venmo, etc." /></div>
+        <p class="sm-hint" id="sm-pay-balance"></p><button class="sm-button" type="submit">Record transaction</button>
+      </form></div>
+    </section>
+    <section class="sm-panel" id="sm-panel-transactions" hidden>
+      <div class="sm-toolbar"><h2>Account history</h2><button class="sm-button alt" type="button" id="sm-export">Export visible transactions (CSV)</button></div>
+      <div class="sm-grid"><div><label for="sm-ledger-user">Filter by user</label><select id="sm-ledger-user"><option value="">All users</option></select></div></div>
+      <div class="sm-box sm-scroll"><table><thead><tr><th>Date (UTC)</th><th>User</th><th>Type</th><th>Amount</th><th>Balance after</th><th>Note</th></tr></thead><tbody id="sm-ledger"></tbody></table></div>
+      <p class="sm-hint">The page loads the 1,000 most recent entries. The complete ledger remains in the plugin data file.</p>
+    </section>
+    <section class="sm-panel" id="sm-panel-banner" hidden>
+      <div class="sm-box">
+        <h2>Subscription banner</h2>
+        <p class="sm-hint">Appears in the Jellyfin Web app for each signed-in account. No JavaScript injector is needed. Browser-based clients only; native TV apps do not show this banner.</p>
+        <form id="sm-banner-form">
+          <div class="sm-columns">
+            <div>
+              <label><input type="checkbox" id="sm-b-enabled" /> Enable banner for users</label>
+              <label><input type="checkbox" id="sm-b-active" /> Show when active</label>
+              <label><input type="checkbox" id="sm-b-expiring" /> Show when expiring soon</label>
+              <label><input type="checkbox" id="sm-b-expired" /> Show when expired</label>
+              <label><input type="checkbox" id="sm-b-unmanaged" /> Show to users not enrolled</label>
+              <label><input type="checkbox" id="sm-b-admins" /> Show to administrators</label>
+            </div>
+            <div>
+              <label><input type="checkbox" id="sm-b-username" /> Display user name</label>
+              <label><input type="checkbox" id="sm-b-days" /> Show days remaining when expiring</label>
+              <label><input type="checkbox" id="sm-b-plan" /> Display plan name</label>
+              <label><input type="checkbox" id="sm-b-date" /> Display paid-through date</label>
+              <label><input type="checkbox" id="sm-b-balance" /> Display account credit</label>
+              <label><input type="checkbox" id="sm-b-dismiss" /> Allow temporary dismissal</label>
+              <label for="sm-b-position">Screen position</label><select id="sm-b-position"><option value="top">Top, below header</option><option value="bottom">Bottom</option></select>
+            </div>
+          </div>
+          <div class="sm-grid">
+            <div><label for="sm-b-warning">Expiring-soon warning (days)</label><input id="sm-b-warning" type="number" min="0" max="365" required /></div>
+            <div><label for="sm-b-refresh">Refresh interval (minutes)</label><input id="sm-b-refresh" type="number" min="1" max="120" required /></div>
+          </div>
+          <div class="sm-grid">
+            <div><label for="sm-b-active-text">Active message</label><input id="sm-b-active-text" maxlength="120" required /></div>
+            <div><label for="sm-b-active-color">Active background</label><input id="sm-b-active-color" type="color" /></div>
+            <div><label for="sm-b-expiring-text">Expiring message</label><input id="sm-b-expiring-text" maxlength="120" required /></div>
+            <div><label for="sm-b-expiring-color">Expiring background</label><input id="sm-b-expiring-color" type="color" /></div>
+            <div><label for="sm-b-expired-text">Expired message</label><input id="sm-b-expired-text" maxlength="120" required /></div>
+            <div><label for="sm-b-expired-color">Expired background</label><input id="sm-b-expired-color" type="color" /></div>
+            <div><label for="sm-b-unmanaged-text">Unmanaged message</label><input id="sm-b-unmanaged-text" maxlength="120" required /></div>
+            <div><label for="sm-b-unmanaged-color">Unmanaged background</label><input id="sm-b-unmanaged-color" type="color" /></div>
+          </div>
+          <button type="submit" class="sm-button">Save banner settings</button>
+          <p class="sm-hint">Changes take effect on each browser's next banner refresh; a page reload will also update it.</p>
+        </form>
+      </div>
+      <div class="sm-box"><h2>Banner preview</h2>
+        <label for="sm-b-preview-status">Preview subscription status</label>
+        <select id="sm-b-preview-status"><option value="active">Active</option><option value="expiring">Expiring soon</option><option value="expired">Expired</option><option value="unmanaged">Unmanaged</option></select>
+        <div id="sm-b-preview" role="status" style="margin-top:16px;padding:13px;border-radius:12px;color:white;"></div>
+      </div>
+    </section>
+    <section class="sm-panel" id="sm-panel-settings" hidden>
+      <div class="sm-box"><h2>Billing settings</h2><form id="sm-settings-form"><label for="sm-timezone">Billing time zone</label><input id="sm-timezone" placeholder="America/Los_Angeles" required /><p class="sm-hint">IANA time zone name, e.g. America/Los_Angeles. The paid-through date is inclusive in this zone.</p><button class="sm-button" type="submit">Save settings</button></form></div>
+      <div class="sm-box"><h2>Access synchronization</h2><p class="sm-hint">Runs automatically at startup and every five minutes. You can also reconcile now. Subscription restrictions use the Jellyfin access schedule; unrelated user settings are retained.</p><button type="button" class="sm-button alt" id="sm-sync">Run synchronization now</button></div>
+      <div class="sm-box"><h2>Data &amp; migration</h2><p class="sm-hint">Data is saved under Jellyfin's data directory in <code>subscription-manager/subscriptions.json</code> with a previous-state backup. Existing subscription dates from the old JavaScript are not imported automatically. Use individual user settings to enter their current paid-through dates.</p></div>
+    </section>
+  </div>
+  <script type="text/javascript">
+  (function () {
+    'use strict';
+    const page = document.querySelector('#subscriptionManagerPage');
+    if (!page || page.dataset.smInitialized) return;
+    page.dataset.smInitialized = 'true';
+    const $ = sel => page.querySelector(sel);
+    let state = null;
+    let selectedUser = null;
+    let tab = 'users';
+    const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    const usd = cents => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((cents || 0) / 100);
+    const cents = value => {
+      if (value === '' || !/^[-+]?\d+(?:\.\d{1,2})?$/.test(String(value).trim())) throw new Error('Enter an amount with up to two decimal places.');
+      return Math.round(Number(value) * 100);
+    };
+    const flash = (message, error) => { $('#sm-flash').textContent = message; $('#sm-flash').classList.toggle('sm-error', !!error); };
+    const userById = id => state?.users.find(u => u.userId === id);
+    const planById = id => state?.plans.find(p => p.id === id);
+    const optionsForPlans = (selected) => '<option value="">Select a plan...</option>' + (state?.plans || [])
+      .filter(p => p.enabled || p.id === selected).map(p => `<option value="${p.id}" ${selected === p.id ? 'selected' : ''}>${escapeHtml(p.name)} (${usd(p.monthlyCents)}/mo)</option>`).join('');
+    const usersOptions = (selected, includeAll) => (includeAll ? '<option value="">All users</option>' : '<option value="">Select a user...</option>') + state.users
+      .filter(u => !u.administrator).map(u => `<option value="${u.userId}" ${u.userId === selected ? 'selected' : ''}>${escapeHtml(u.name)}</option>`).join('');
+    function showTab(next) {
+      tab = next;
+      page.querySelectorAll('.sm-panel').forEach(p => p.hidden = p.id !== 'sm-panel-' + next);
+      page.querySelectorAll('.sm-tab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === next)));
+    }
+    function render() {
+      if (!state) return;
+      $('#sm-metrics').innerHTML = [
+        ['Active subscriptions', state.activeCount], ['Enrolled users', state.enrolledCount],
+        ['Payments collected', usd(state.totalCollectedCents)], ['Unspent account credit', usd(state.totalBalanceCents)]
+      ].map(([k, v]) => `<div class="sm-metric"><span class="sm-muted">${k}</span><strong>${v}</strong></div>`).join('');
+      $('#sm-users').innerHTML = state.users.map(u => `<tr>
+        <td><strong>${escapeHtml(u.name)}</strong></td>
+        <td><input type="checkbox" data-enroll="${u.userId}" aria-label="Manage ${escapeHtml(u.name)}" ${u.included ? 'checked' : ''} ${u.administrator ? 'disabled' : ''} /></td>
+        <td><select aria-label="Plan for ${escapeHtml(u.name)}" data-plan="${u.userId}" ${u.administrator ? 'disabled' : ''}>${optionsForPlans(u.planId)}</select></td>
+        <td>${usd(u.balanceCents)}</td><td>${escapeHtml(u.paidThrough || '—')}</td>
+        <td><span class="sm-status ${escapeHtml(u.status)}">${escapeHtml(u.status)}</span></td>
+        <td>${u.administrator ? '—' : `<button class="sm-button alt" type="button" data-details="${u.userId}">Configure</button>`}</td>
+      </tr>`).join('');
+      $('#sm-plans').innerHTML = state.plans.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${usd(p.monthlyCents)}</td>
+        <td>${p.enabled ? 'Yes' : 'Hidden'}</td><td>${state.users.filter(u => u.included && u.planId === p.id).length}</td>
+        <td><button class="sm-button alt" type="button" data-edit-plan="${p.id}">Edit</button></td></tr>`).join('') || '<tr><td colspan="5">No plans yet. Create one above.</td></tr>';
+      const payUser = $('#sm-pay-user').value;
+      $('#sm-pay-user').innerHTML = usersOptions(payUser, false);
+      const ledgerUser = $('#sm-ledger-user').value;
+      $('#sm-ledger-user').innerHTML = usersOptions(ledgerUser, true);
+      renderLedger();
+      updatePayBalance();
+      $('#sm-timezone').value = state.timeZoneId;
+      if (state.banner) renderBannerSettings(state.banner);
+      if (selectedUser) showDetails(selectedUser);
+      showTab(tab);
+    }
+    function renderLedger() {
+      if (!state) return;
+      const chosen = $('#sm-ledger-user').value;
+      const entries = state.ledger.filter(t => !chosen || t.userId === chosen);
+      $('#sm-ledger').innerHTML = entries.map(t => `<tr>
+        <td>${escapeHtml(t.createdUtc?.replace('T', ' ').replace('Z', ' UTC').slice(0, 23))}</td>
+        <td>${escapeHtml(userById(t.userId)?.name || t.userId)}</td><td>${escapeHtml(t.kind)}</td>
+        <td>${usd(t.amountCents)}</td><td>${usd(t.balanceAfterCents)}</td><td>${escapeHtml(t.note)}</td>
+      </tr>`).join('') || '<tr><td colspan="6">No transactions found.</td></tr>';
+    }
+    function updatePayBalance() {
+      const u = userById($('#sm-pay-user').value);
+      $('#sm-pay-balance').textContent = u ? `${u.name} currently has ${usd(u.balanceCents)} available. ${u.status}.` : '';
+    }
+    function showDetails(id) {
+      const u = userById(id);
+      if (!u || u.administrator) { $('#sm-detail').hidden = true; selectedUser = null; return; }
+      selectedUser = id;
+      $('#sm-detail').hidden = false;
+      $('#sm-detail-name').textContent = `${u.name} — subscription settings`;
+      $('#sm-detail-summary').textContent = `Status: ${u.status} | Balance: ${usd(u.balanceCents)} | Next charge: ${u.nextChargeOn || 'not scheduled'}`;
+      $('#sm-detail-plan').innerHTML = optionsForPlans(u.planId);
+      $('#sm-detail-expiry').value = u.paidThrough || '';
+    }
+    const bFields = {
+      enabled:['sm-b-enabled','checked'], showActive:['sm-b-active','checked'],
+      showExpiring:['sm-b-expiring','checked'], showExpired:['sm-b-expired','checked'],
+      showUnmanaged:['sm-b-unmanaged','checked'], showAdmins:['sm-b-admins','checked'],
+      showUserName:['sm-b-username','checked'], showDaysRemaining:['sm-b-days','checked'],
+      showPlan:['sm-b-plan','checked'], showPaidThrough:['sm-b-date','checked'],
+      showBalance:['sm-b-balance','checked'], dismissible:['sm-b-dismiss','checked'],
+      position:['sm-b-position','value'], warningDays:['sm-b-warning','number'],
+      refreshMinutes:['sm-b-refresh','number'], activeText:['sm-b-active-text','value'],
+      expiringText:['sm-b-expiring-text','value'], expiredText:['sm-b-expired-text','value'],
+      unmanagedText:['sm-b-unmanaged-text','value'], activeColor:['sm-b-active-color','value'],
+      expiringColor:['sm-b-expiring-color','value'], expiredColor:['sm-b-expired-color','value'],
+      unmanagedColor:['sm-b-unmanaged-color','value']
+    };
+    function getBannerSettings() {
+      const b = {};
+      Object.entries(bFields).forEach(([name,[id,kind]]) => {
+        const element = $('#' + id);
+        b[name] = kind === 'checked' ? element.checked : kind === 'number' ? Number(element.value) : element.value;
+      });
+      return b;
+    }
+    function renderBannerSettings(b) {
+      Object.entries(bFields).forEach(([name,[id,kind]]) => {
+        const element = $('#' + id);
+        if (kind === 'checked') element.checked = !!b[name];
+        else element.value = b[name] ?? '';
+      });
+      previewBanner();
+    }
+    function previewBanner() {
+      const b = getBannerSettings();
+      const status = $('#sm-b-preview-status').value;
+      const color = ({ active:b.activeColor, expiring:b.expiringColor, expired:b.expiredColor, unmanaged:b.unmanagedColor })[status];
+      const title = ({ active:b.activeText, expiring:b.expiringText, expired:b.expiredText, unmanaged:b.unmanagedText })[status];
+      const el = $('#sm-b-preview');
+      el.style.backgroundColor = color;
+      el.replaceChildren();
+      const strong = document.createElement('strong');
+      strong.textContent = (b.showUserName ? 'Example User: ' : '') + title;
+      el.appendChild(strong);
+      const detail = document.createElement('div');
+      detail.style.fontSize = '13px';
+      detail.style.marginTop = '5px';
+      detail.textContent = [b.showPlan ? 'Plan: Example' : '', b.showPaidThrough ? 'Paid through: 2026-12-15' : '',
+        b.showBalance ? 'Credit: $10.00' : ''].filter(Boolean).join(' · ');
+      el.appendChild(detail);
+    }
+    async function api(path, data) {
+      const config = { type: data === undefined ? 'GET' : 'POST', url: ApiClient.getUrl('SubscriptionManager/' + path), dataType: 'json' };
+      if (data !== undefined) { config.contentType = 'application/json'; config.data = JSON.stringify(data); }
+      return ApiClient.ajax(config);
+    }
+    async function refresh(message) {
+      state = await api('overview');
+      render();
+      if (message) flash(message, false);
+    }
+    async function invoke(path, payload, message) {
+      flash('Saving...', false);
+      try { await api(path, payload); await refresh(message || 'Saved successfully.'); }
+      catch (e) {
+        let detail = e?.responseJSON?.message || e?.message || e?.statusText || 'Request failed';
+        if (typeof e?.responseText === 'string') { try { detail = JSON.parse(e.responseText).message || detail; } catch (_) { } }
+        flash(detail, true);
+        throw e;
+      }
+    }
+    page.addEventListener('click', async ev => {
+      const target = ev.target.closest('button');
+      if (!target) return;
+      if (target.dataset.tab) return showTab(target.dataset.tab);
+      if (target.dataset.details) return showDetails(target.dataset.details);
+      if (target.id === 'sm-close-detail') { selectedUser = null; $('#sm-detail').hidden = true; return; }
+      if (target.dataset.editPlan) {
+        const p = planById(target.dataset.editPlan);
+        $('#sm-plan-id').value = p.id; $('#sm-plan-name').value = p.name;
+        $('#sm-plan-price').value = (p.monthlyCents / 100).toFixed(2);
+        $('#sm-plan-enabled').checked = p.enabled;
+        $('#sm-plan-editor-title').textContent = 'Edit plan'; return;
+      }
+      if (target.id === 'sm-plan-new') { $('#sm-plan-form').reset(); $('#sm-plan-id').value = ''; $('#sm-plan-editor-title').textContent = 'Create a plan'; return; }
+      if (target.id === 'sm-refresh' || target.id === 'sm-sync') {
+        try { await invoke('sync', {}, 'Users and subscription access synchronized.'); } catch (_) { }
+      }
+      if (target.id === 'sm-save-plan' && selectedUser) {
+        const u = userById(selectedUser);
+        const planId = $('#sm-detail-plan').value || null;
+        try { await invoke('users/' + selectedUser, { included: u.included, planId }, 'User plan saved.'); } catch (_) { }
+      }
+      if (target.id === 'sm-export') exportCsv();
+    });
+    page.addEventListener('change', async ev => {
+      const t = ev.target;
+      if (t.dataset.enroll) {
+        const u = userById(t.dataset.enroll);
+        const planId = page.querySelector(`[data-plan="${u.userId}"]`).value || null;
+        try { await invoke('users/' + u.userId, { included: t.checked, planId }, 'User subscription updated.'); }
+        catch (_) { t.checked = !t.checked; }
+      }
+      if (t.dataset.plan) {
+        const u = userById(t.dataset.plan);
+        try { await invoke('users/' + u.userId, { included: u.included, planId: t.value || null }, 'Plan assignment saved.'); }
+        catch (_) { t.value = u.planId || ''; }
+      }
+      if (t.id === 'sm-pay-user') updatePayBalance();
+      if (t.id === 'sm-ledger-user') renderLedger();
+      if (t.id === 'sm-pay-mode') { $('#sm-pay-amount').min = t.value === 'adjustments' ? '-1000000' : '0.01'; }
+    });
+    $('#sm-plan-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try {
+        await invoke('plans', { id: $('#sm-plan-id').value || null, name: $('#sm-plan-name').value,
+          monthlyCents: cents($('#sm-plan-price').value), enabled: $('#sm-plan-enabled').checked }, 'Plan saved.');
+        $('#sm-plan-new').click();
+      } catch (_) { }
+    });
+    $('#sm-payment-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try {
+        const userId = $('#sm-pay-user').value;
+        if (!userId) throw new Error('Select a Jellyfin user.');
+        const mode = $('#sm-pay-mode').value;
+        const amountCents = cents($('#sm-pay-amount').value);
+        if (mode === 'payments' && amountCents <= 0) throw new Error('Payments must be positive.');
+        if (mode === 'adjustments' && !$('#sm-pay-note').value.trim()) throw new Error('A balance correction needs a reason.');
+        await invoke(mode, { userId, amountCents, note: $('#sm-pay-note').value }, 'Transaction recorded. Access and balance updated.');
+        $('#sm-pay-amount').value = ''; $('#sm-pay-note').value = '';
+      } catch (e) { if (!e?.status) flash(e?.message || 'Could not record transaction.', true); }
+    });
+    $('#sm-detail-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!selectedUser) return;
+      const value = $('#sm-detail-expiry').value;
+      if (!confirm(`Override this user's paid-through date to ${value || 'none'}?`)) return;
+      try { await invoke('users/' + selectedUser + '/expiration', { paidThrough: value || null, note: 'Manual date override from admin UI' }, 'Subscription date saved.'); } catch (_) { }
+    });
+    $('#sm-settings-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try { await invoke('settings', { timeZoneId: $('#sm-timezone').value.trim() }, 'Billing time zone saved.'); } catch (_) { }
+    });
+    function exportCsv() {
+      if (!state) return;
+      const chosen = $('#sm-ledger-user').value;
+      const records = state.ledger.filter(t => !chosen || t.userId === chosen);
+      const csvEscape = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
+      const lines = [['DateUTC', 'User', 'Kind', 'AmountUSD', 'BalanceAfterUSD', 'Note'],
+        ...records.map(t => [t.createdUtc, userById(t.userId)?.name || t.userId, t.kind,
+          (t.amountCents / 100).toFixed(2), (t.balanceAfterCents / 100).toFixed(2), t.note])];
+      const blob = new Blob([lines.map(r => r.map(csvEscape).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = 'jellyfin-subscription-transactions.csv'; a.click(); URL.revokeObjectURL(url);
+    }
+    $('#sm-banner-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try { await invoke('banner', { banner: getBannerSettings() }, 'Banner settings saved.'); }
+      catch (_) { }
+    });
+    $('#sm-banner-form').addEventListener('input', previewBanner);
+    $('#sm-b-preview-status').addEventListener('change', previewBanner);
+    page.addEventListener('pageshow', async () => {
+      try { await refresh(); } catch (e) { flash('Unable to load subscription data. Verify Jellyfin admin permissions and plugin installation.', true); }
+    });
+  })();
+  </script>
+</div>
