@@ -1,0 +1,11 @@
+[
+  {
+    "name": "My Subscription",
+    "icon": "credit_card",
+    "url": "#/home?smAccount=1",
+    "sideMenu": true,
+    "topNavigation": "none",
+    "userMenu": false,
+    "collapsed": false
+  }
+]

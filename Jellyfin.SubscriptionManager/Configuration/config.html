@@ -76,6 +76,7 @@
       <button class="sm-tab" type="button" data-tab="payments" aria-selected="false">Add funds</button>
       <button class="sm-tab" type="button" data-tab="transactions" aria-selected="false">Transactions</button>
       <button class="sm-tab" type="button" data-tab="banner" aria-selected="false">Banner</button>
+      <button class="sm-tab" type="button" data-tab="subscriber" aria-selected="false">Subscriber page</button>
       <button class="sm-tab" type="button" data-tab="settings" aria-selected="false">Settings</button>
     </nav>
     <section class="sm-panel" id="sm-panel-users">
@@ -176,6 +177,60 @@
       <div class="sm-grid"><div><label for="sm-ledger-user">Filter by user</label><select id="sm-ledger-user"><option value="">All users</option></select></div></div>
       <div class="sm-box sm-scroll"><table><thead><tr><th>Date (UTC)</th><th>User</th><th>Type</th><th>Amount</th><th>Balance after</th><th>Cash received/refunded</th><th>Note</th><th>Refund</th></tr></thead><tbody id="sm-ledger"></tbody></table></div>
       <p class="sm-hint">The page loads the 1,000 most recent entries. Refund creates a linked reversal rather than deleting the original. Refunding a consumed payment can leave a negative balance; previously paid-through dates are not automatically revoked. The complete ledger is stored in the plugin data file.</p>
+    </section>
+    <section class="sm-panel" id="sm-panel-subscriber" hidden>
+      <div class="sm-box"><h2>Subscriber page customization</h2>
+        <p class="sm-hint">These options control the My Subscription page for all signed-in Jellyfin users. Account data is always private to the signed-in user. Hide a feature to remove it from the page; disabled plan and banner editing are also blocked by the API.</p>
+        <form id="sm-subscriber-form">
+          <label class="sm-switch-row"><input type="checkbox" id="sm-sp-enabled" /> Enable subscriber portal</label>
+          <div class="sm-grid">
+            <div><label for="sm-sp-title">Page title</label><input id="sm-sp-title" maxlength="90" required /></div>
+            <div><label for="sm-sp-subtitle">Subtitle</label><input id="sm-sp-subtitle" maxlength="220" /></div>
+            <div><label for="sm-sp-accent">Button and accent color</label><input type="color" id="sm-sp-accent" value="#007ba6" /></div>
+            <div><label for="sm-sp-card">Card background color</label><input type="color" id="sm-sp-card" value="#222630" /></div>
+          </div>
+          <label for="sm-sp-welcome">Welcome message</label><textarea id="sm-sp-welcome" maxlength="600" rows="3"></textarea>
+          <label for="sm-sp-support">Payment/help instructions</label><textarea id="sm-sp-support" maxlength="500" rows="3"></textarea>
+          <h3>Section headings</h3>
+          <div class="sm-grid">
+            <div><label for="sm-sp-plan-title">Plan details heading</label><input id="sm-sp-plan-title" maxlength="90" /></div>
+            <div><label for="sm-sp-change-title">Plan-change heading</label><input id="sm-sp-change-title" maxlength="90" /></div>
+            <div><label for="sm-sp-banner-title">Banner editor heading</label><input id="sm-sp-banner-title" maxlength="90" /></div>
+            <div><label for="sm-sp-transaction-title">Transaction history heading</label><input id="sm-sp-transaction-title" maxlength="90" /></div>
+            <div><label for="sm-sp-support-title">Help section heading</label><input id="sm-sp-support-title" maxlength="90" /></div>
+          </div>
+          <h3>Visible sections and user actions</h3>
+          <div class="sm-columns">
+            <div>
+              <label><input type="checkbox" id="sm-sp-balance" /> Show account credit</label>
+              <label><input type="checkbox" id="sm-sp-plan" /> Show current plan</label>
+              <label><input type="checkbox" id="sm-sp-paid" /> Show paid-through date</label>
+              <label><input type="checkbox" id="sm-sp-renewal" /> Show next renewal</label>
+              <label><input type="checkbox" id="sm-sp-details" /> Show plan details</label>
+              <label><input type="checkbox" id="sm-sp-transactions" /> Show transaction history</label>
+            </div><div>
+              <label><input type="checkbox" id="sm-sp-changes" /> Allow plan-change requests (approval required)</label>
+              <label><input type="checkbox" id="sm-sp-personal" /> Allow personal banner editing</label>
+              <label><input type="checkbox" id="sm-sp-launcher" /> Show built-in header/menu shortcut</label>
+              <label><input type="checkbox" id="sm-sp-bannerlink" /> Show My Subscription link in banner</label>
+            </div>
+          </div>
+          <button class="sm-button" type="submit">Save subscriber page</button>
+        </form>
+      </div>
+      <div class="sm-box">
+        <h2>Live layout preview</h2><p class="sm-hint">This is a sample preview using the choices above, not a real user's account.</p>
+        <div id="sm-sp-preview" class="sm-box" style="max-width:700px;margin:auto;"></div>
+      </div>
+      <div class="sm-box">
+        <h2>KefinTweaks · Custom Menu Links JSON</h2>
+        <p class="sm-hint">Paste the generated JSON as an item in KefinTweaks → Custom Menu Links. If you already have other menu entries, copy only the object and add it to your existing array. This link opens the authenticated account page in Jellyfin Web.</p>
+        <div class="sm-grid"><div><label for="sm-sp-menuname">Menu label</label><input id="sm-sp-menuname" maxlength="90" placeholder="My Subscription" /></div>
+        <div><label for="sm-sp-menuicon">Material icon name</label><input id="sm-sp-menuicon" maxlength="50" placeholder="credit_card" /></div></div>
+        <label for="sm-sp-menu-json">Generated menu JSON</label><textarea readonly rows="12" id="sm-sp-menu-json" spellcheck="false"></textarea>
+        <button class="sm-button alt" type="button" id="sm-sp-copy">Copy KefinTweaks JSON</button>
+        <p class="sm-hint">The route is <code>#/home?smAccount=1</code>. The plugin intercepts this Home route and opens the subscriber page without a broken Jellyfin route. A KefinTweaks menu link works only where the Jellyfin Web client and the plugin's injected script run.</p>
+      </div>
     </section>
     <section class="sm-panel" id="sm-panel-banner" hidden>
       <div class="sm-box">

@@ -21,16 +21,16 @@ class TopBannerPersistence(unittest.TestCase):
         # removed it because #homeTab siblings were hidden by Jellyfin layouts.
         mount = self.mount_logic()
         self.assertIn('const target = findHomeContainer()', mount)
-        self.assertIn('target.prepend(bannerElement)', mount)
+        self.assertIn('target.prepend(bannerSlot)', BANNER)
         self.assertNotIn('homeTopPlacement()', mount)
         self.assertNotIn('target.insertBefore(bannerElement, before)', mount)
 
     def test_banner_is_not_moved_on_every_media_redraw(self):
         mount = self.mount_logic()
-        self.assertIn('bannerElement.parentElement !== target || target.firstElementChild !== bannerElement', mount)
-        self.assertIn('target.prepend(bannerElement)', mount)
-        self.assertNotIn('ajax(', mount)
-        self.assertNotIn('refresh(', mount)
+        self.assertIn('bannerSlot.parentElement !== target || target.firstElementChild !== bannerSlot', BANNER)
+        self.assertIn('target.prepend(bannerSlot)', BANNER)
+        self.assertNotIn('ajax(', BANNER.split('function ensureMounted() {',1)[1].split('function queueMount()',1)[0])
+        self.assertNotIn('refresh(', BANNER.split('function ensureMounted() {',1)[1].split('function queueMount()',1)[0])
 
     def test_temporary_hidden_home_tab_preserves_banner(self):
         mount = self.mount_logic()

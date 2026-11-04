@@ -30,7 +30,7 @@ class SubscriberPortalTests(unittest.TestCase):
         self.assertIn('[Authorize]\n    [HttpGet("account/me")]', CONTROLLER)
         self.assertIn('GetAccountAsync(userId.Value, ct)', CONTROLLER)
         self.assertIn('RequestPlanChangeAsync(userId.Value, request)', CONTROLLER)
-        self.assertIn('SetUserBannerAsync(userId.Value, request)', CONTROLLER)
+        self.assertIn('SetSubscriberBannerAsync(userId.Value, request)', CONTROLLER)
         self.assertNotIn('[AllowAnonymous]\n    [HttpGet("account/me")]', CONTROLLER)
         self.assertIn('[Authorize(Policy = Policies.RequiresElevation)]\n    [HttpPost("account/requests/{userId:guid}/review")]', CONTROLLER)
 

@@ -17,7 +17,7 @@ class OriginalBannerAnchor(unittest.TestCase):
     def test_top_prepends_into_real_home_container(self):
         mount = BANNER[BANNER.index('function ensureMounted()'):BANNER.index('function queueMount()')]
         self.assertIn('const target = findHomeContainer()', mount)
-        self.assertIn('target.prepend(bannerElement)', mount)
+        self.assertIn('target.prepend(bannerSlot)', BANNER)
         self.assertNotIn('homeTopPlacement()', mount)
         self.assertNotIn('target.insertBefore(bannerElement, before)', mount)
 
@@ -29,9 +29,9 @@ class OriginalBannerAnchor(unittest.TestCase):
 
     def test_no_extra_billing_or_api_calls_to_reanchor(self):
         mount = BANNER[BANNER.index('function ensureMounted()'):BANNER.index('function queueMount()')]
-        self.assertNotIn('ajax(', mount)
-        self.assertNotIn('refresh(', mount)
-        self.assertIn('lastData', mount)
+        self.assertNotIn('ajax(', BANNER.split('function ensureMounted() {',1)[1].split('function queueMount()',1)[0])
+        self.assertNotIn('refresh(', BANNER.split('function ensureMounted() {',1)[1].split('function queueMount()',1)[0])
+        self.assertIn('lastData', BANNER.split('function ensureMounted() {',1)[1].split('function queueMount()',1)[0])
 
 if __name__ == '__main__':
     unittest.main()

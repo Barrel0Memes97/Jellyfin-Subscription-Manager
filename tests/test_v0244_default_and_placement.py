@@ -25,7 +25,7 @@ class DefaultPlanAndBannerPlacement(unittest.TestCase):
         self.assertIn("'.homeSectionsContainer'", js)
         self.assertIn("'.mainAnimatedPage'", js)
         self.assertIn("'.pageContainer'", js)
-        self.assertIn('target.prepend(bannerElement)', js)
+        self.assertIn('target.prepend(bannerSlot)', js)
         self.assertIn('target.appendChild(bannerElement)', js)
         self.assertNotIn('target.insertBefore(bannerElement, before)', js)
         self.assertIn('if (!hasHomeRoute()) { remove(); return; }', js)

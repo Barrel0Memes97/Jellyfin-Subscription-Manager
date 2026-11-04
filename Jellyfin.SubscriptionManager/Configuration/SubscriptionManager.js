@@ -62,7 +62,7 @@ export default function SubscriptionManagerController(page) {
         totalBalanceCents:field(raw, 'totalBalanceCents') ?? 0,
         timeZoneId:field(raw, 'timeZoneId') ?? 'UTC',
         defaultPlanId:guid(field(raw, 'defaultPlanId')), banner:field(raw, 'banner') ?? null,
-        seerr:field(raw, 'seerr') ?? null };
+        seerr:field(raw, 'seerr') ?? null, subscriberPage:field(raw, 'subscriberPage') ?? null };
     }
     const userById = id => state?.users.find(u => u.userId === guid(id));
     const planById = id => state?.plans.find(p => p.id === guid(id));
@@ -158,6 +158,7 @@ export default function SubscriptionManagerController(page) {
       $('#sm-b-preview-user').innerHTML = '<option value="">Example user</option>' + state.users
         .filter(u => !u.administrator).map(u => `<option value="${u.userId}" ${u.userId === chosenPreviewUser ? 'selected' : ''}>${escapeHtml(u.name)}</option>`).join('');
       if (state.banner) renderBannerSettings(state.banner);
+      if (state.subscriberPage) renderSubscriberSettings(state.subscriberPage);
       if (state.seerr) renderSeerrSettings(state.seerr);
       if (selectedUser) showDetails(selectedUser, false);
       showTab(tab);
@@ -295,6 +296,52 @@ export default function SubscriptionManagerController(page) {
         close.className = 'sm-preview-close'; close.textContent = '×';
         el.appendChild(close);
       }
+    }
+    const subscriberFields = {
+      enabled:['sm-sp-enabled','checked'],title:['sm-sp-title','value'],subtitle:['sm-sp-subtitle','value'],
+      welcomeMessage:['sm-sp-welcome','value'],supportMessage:['sm-sp-support','value'],
+      planSectionTitle:['sm-sp-plan-title','value'],changeSectionTitle:['sm-sp-change-title','value'],
+      bannerSectionTitle:['sm-sp-banner-title','value'],transactionSectionTitle:['sm-sp-transaction-title','value'],
+      supportSectionTitle:['sm-sp-support-title','value'],
+      accentColor:['sm-sp-accent','value'],cardColor:['sm-sp-card','value'],
+      showBalance:['sm-sp-balance','checked'],showPlan:['sm-sp-plan','checked'],
+      showPaidThrough:['sm-sp-paid','checked'],showRenewal:['sm-sp-renewal','checked'],
+      showPlanDetails:['sm-sp-details','checked'],allowPlanRequests:['sm-sp-changes','checked'],
+      allowBannerCustomization:['sm-sp-personal','checked'],showTransactions:['sm-sp-transactions','checked'],
+      showLauncher:['sm-sp-launcher','checked'],showBannerLink:['sm-sp-bannerlink','checked'],
+      menuName:['sm-sp-menuname','value'],menuIcon:['sm-sp-menuicon','value']
+    };
+    function getSubscriberSettings() {
+      return Object.fromEntries(Object.entries(subscriberFields).map(([key,[id,kind]]) =>
+        [key,kind === 'checked' ? $('#' + id).checked : $('#' + id).value]));
+    }
+    function renderSubscriberSettings(settings) {
+      Object.entries(subscriberFields).forEach(([key,[id,kind]])=>{
+        const el=$('#'+id),v=field(settings,key);
+        if(kind === 'checked') el.checked=bool(v);
+        else el.value=v ?? '';
+      });
+      previewSubscriber();
+    }
+    function previewSubscriber() {
+      const p=getSubscriberSettings();
+      const root=$('#sm-sp-preview');
+      root.style.background=p.cardColor;
+      root.style.borderTop='4px solid '+p.accentColor;
+      root.innerHTML=`<h2>${escapeHtml(p.title || 'My Subscription')}</h2>
+        <p>${escapeHtml(p.subtitle)}</p><p>${escapeHtml(p.welcomeMessage)}</p>
+        <div class="sm-metrics">${[
+          [p.showBalance,'Available credit','$10.00'],[p.showPlan,'Plan','Standard'],
+          [p.showPaidThrough,'Paid through','2027-02-26'],[p.showRenewal,'Next renewal','2027-02-27']
+        ].filter(v=>v[0]).map(v=>`<div class="sm-metric"><small>${v[1]}</small><strong>${v[2]}</strong></div>`).join('')}</div>
+        ${p.showPlanDetails?'<p><strong>'+escapeHtml(p.planSectionTitle)+'</strong> — Plan description here.</p>':''}
+        ${p.allowPlanRequests?'<p>'+escapeHtml(p.changeSectionTitle)+' (requires approval)</p>':''}
+        ${p.allowBannerCustomization?'<p>'+escapeHtml(p.bannerSectionTitle)+'</p>':''}
+        ${p.showTransactions?'<p>'+escapeHtml(p.transactionSectionTitle)+'</p>':''}
+        <p><strong>${escapeHtml(p.supportSectionTitle)}</strong> — ${escapeHtml(p.supportMessage)}</p>`;
+      const link=[{name:p.menuName || 'My Subscription',icon:p.menuIcon || 'credit_card',
+        url:'#/home?smAccount=1',sideMenu:true,topNavigation:'none',userMenu:false,collapsed:false}];
+      $('#sm-sp-menu-json').value=JSON.stringify(link,null,2);
     }
     function fridayInMonth(year, monthIndex, mode) {
       const first = new Date(year, monthIndex, 1, 12);
@@ -548,6 +595,20 @@ export default function SubscriptionManagerController(page) {
       previewBanner();
     });
     $('#sm-user-banner-form').addEventListener('input', previewBanner);
+    $('#sm-subscriber-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      try { await invoke('subscriber-page', {page:getSubscriberSettings()}, 'Subscriber page settings saved.'); }
+      catch (_) { }
+    });
+    $('#sm-subscriber-form').addEventListener('input',previewSubscriber);
+    $('#sm-subscriber-form').addEventListener('change',previewSubscriber);
+    $('#sm-sp-menuname').addEventListener('input',previewSubscriber);
+    $('#sm-sp-menuicon').addEventListener('input',previewSubscriber);
+    $('#sm-sp-copy').addEventListener('click',async()=>{
+      const val=$('#sm-sp-menu-json').value;
+      try { await navigator.clipboard.writeText(val); flash('KefinTweaks menu JSON copied.'); }
+      catch (_) { $('#sm-sp-menu-json').focus(); $('#sm-sp-menu-json').select(); flash('Select the JSON and copy it with Ctrl+C.'); }
+    });
     $('#sm-settings-form').addEventListener('submit', async ev => {
       ev.preventDefault();
       try { await invoke('settings', { timeZoneId: $('#sm-timezone').value.trim() }, 'Billing time zone saved.'); } catch (_) { }

@@ -6,6 +6,7 @@ public sealed class SubscriptionState
 {
     public string TimeZoneId { get; set; } = "UTC";
     public BannerSettings Banner { get; set; } = new();
+    public SubscriberPageSettings SubscriberPage { get; set; } = new();
     public SeerrSettings Seerr { get; set; } = new();
     // The plan used when an administrator enrolls a user without first choosing one.
     public Guid? DefaultPlanId { get; set; }
@@ -176,5 +177,35 @@ public sealed class BannerSettings
 
 public sealed record BannerRequest(BannerSettings Banner);
 
+/// <summary>Administrator-managed presentation and permissions for the subscriber portal.</summary>
+public sealed class SubscriberPageSettings
+{
+    public bool Enabled { get; set; } = true;
+    public string Title { get; set; } = "My Subscription";
+    public string MenuName { get; set; } = "My Subscription";
+    public string MenuIcon { get; set; } = "credit_card";
+    public string Subtitle { get; set; } = "Your Jellyfin plan, renewal dates, and account credit.";
+    public string WelcomeMessage { get; set; } = "Manage your subscription and review your account activity.";
+    public string SupportMessage { get; set; } = "For payments or billing questions, contact your Jellyfin server administrator.";
+    public string PlanSectionTitle { get; set; } = "Your active plan";
+    public string ChangeSectionTitle { get; set; } = "Request a plan change";
+    public string BannerSectionTitle { get; set; } = "Personalize your subscription banner";
+    public string TransactionSectionTitle { get; set; } = "Recent transactions";
+    public string SupportSectionTitle { get; set; } = "Need help?";
+    public string AccentColor { get; set; } = "#007ba6";
+    public string CardColor { get; set; } = "#222630";
+    public bool ShowBalance { get; set; } = true;
+    public bool ShowPlan { get; set; } = true;
+    public bool ShowPaidThrough { get; set; } = true;
+    public bool ShowRenewal { get; set; } = true;
+    public bool ShowPlanDetails { get; set; } = true;
+    public bool AllowPlanRequests { get; set; } = true;
+    public bool AllowBannerCustomization { get; set; } = true;
+    public bool ShowTransactions { get; set; } = true;
+    public bool ShowLauncher { get; set; } = true;
+    public bool ShowBannerLink { get; set; } = true;
+}
+
+public sealed record SubscriberPageRequest(SubscriberPageSettings Page);
 public sealed record AccountPlanRequest(Guid PlanId);
 public sealed record AccountPlanReviewRequest(bool Approve);

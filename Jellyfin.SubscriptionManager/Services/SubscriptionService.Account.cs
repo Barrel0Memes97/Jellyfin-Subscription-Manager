@@ -9,6 +9,27 @@ namespace Jellyfin.Plugin.SubscriptionManager.Services;
 /// </summary>
 public sealed partial class SubscriptionService
 {
+    public async Task SetSubscriberPageAsync(SubscriberPageSettings? settings)
+    {
+        if (settings is null) throw new ArgumentException("Subscriber page settings required");
+        static bool Hex(string? color) => color is not null &&
+            System.Text.RegularExpressions.Regex.IsMatch(color, "^#[a-fA-F0-9]{6}$");
+        if (!Hex(settings.AccentColor) || !Hex(settings.CardColor))
+            throw new ArgumentException("Page colors must be six-digit hex codes");
+        if (string.IsNullOrWhiteSpace(settings.Title) || settings.Title.Length > 90 || settings.MenuName is null || settings.MenuName.Length > 90 ||
+            settings.MenuIcon is null || settings.MenuIcon.Length > 50 ||
+            settings.Subtitle is null || settings.Subtitle.Length > 220 ||
+            settings.WelcomeMessage is null || settings.WelcomeMessage.Length > 600 ||
+            settings.SupportMessage is null || settings.SupportMessage.Length > 500 ||
+            new[] { settings.PlanSectionTitle, settings.ChangeSectionTitle, settings.BannerSectionTitle,
+                    settings.TransactionSectionTitle, settings.SupportSectionTitle }
+                .Any(value => string.IsNullOrWhiteSpace(value) || value.Length > 90))
+            throw new ArgumentException("Page text is missing or exceeds its length limit");
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try { _state.SubscriberPage = settings; Save(); }
+        finally { _gate.Release(); }
+    }
+
     public async Task<object> GetAccountAsync(Guid userId, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -29,6 +50,7 @@ public sealed partial class SubscriptionService
             return new
             {
                 name = user.Username,
+                page = _state.SubscriberPage,
                 status,
                 managed = member?.Included == true,
                 today,
@@ -64,6 +86,20 @@ public sealed partial class SubscriptionService
         finally { _gate.Release(); }
     }
 
+    public async Task SetSubscriberBannerAsync(Guid userId, UserBannerRequest request)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            RequireUser(userId);
+            if (!_state.SubscriberPage.Enabled || !_state.SubscriberPage.AllowBannerCustomization)
+                throw new ArgumentException("Banner customization is disabled by the administrator");
+        }
+        finally { _gate.Release(); }
+        // Existing setter validates lengths and colors and takes the lock itself.
+        await SetUserBannerAsync(userId, request).ConfigureAwait(false);
+    }
+
     public async Task RequestPlanChangeAsync(Guid userId, AccountPlanRequest request)
     {
         if (request.PlanId == Guid.Empty) throw new ArgumentException("Choose a plan");
@@ -71,6 +107,8 @@ public sealed partial class SubscriptionService
         try
         {
             RequireUser(userId);
+            if (!_state.SubscriberPage.Enabled || !_state.SubscriberPage.AllowPlanRequests)
+                throw new ArgumentException("Plan change requests are disabled by the administrator");
             // Do not create memberships or silently enroll users through a
             // subscriber-facing request. Enrollment remains administrator-only.
             var member = _state.Memberships.FirstOrDefault(m => m.UserId == userId);

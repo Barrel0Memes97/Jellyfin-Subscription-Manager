@@ -46,7 +46,7 @@ class V0243Features(unittest.TestCase):
     def test_position_is_applied_on_actual_home_dom_and_floating(self):
         banner = read('Configuration/banner.js')
         self.assertIn('target.appendChild(bannerElement)', banner)
-        self.assertIn('target.prepend(bannerElement)', banner)
+        self.assertIn('target.prepend(bannerSlot)', banner)
         self.assertIn("field(data.appearance || {}, 'position')", banner)
         self.assertIn('banner.style.top', banner)
         self.assertIn('banner.style.bottom', banner)

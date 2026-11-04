@@ -42,6 +42,7 @@ public sealed partial class SubscriptionService
             : new SubscriptionState();
         // Schema-compatible upgrade of 0.2.2 state: never reset plans or ledger.
         _state.Seerr ??= new SeerrSettings();
+        _state.SubscriberPage ??= new SubscriberPageSettings();
         foreach (var plan in _state.Plans)
         {
             plan.JellyfinPermissions ??= new PlanJellyfinPermissions();
@@ -379,6 +380,7 @@ public sealed partial class SubscriptionService
                 today,
                 timeZoneId = _state.TimeZoneId,
                 banner = _state.Banner,
+                subscriberPage = _state.SubscriberPage,
                 defaultPlanId = _state.DefaultPlanId,
                 seerr = new { enabled = _state.Seerr.Enabled, url = _state.Seerr.Url,
                     hasApiKey = !string.IsNullOrWhiteSpace(_state.Seerr.ApiKey),
@@ -630,6 +632,7 @@ public sealed partial class SubscriptionService
             return new
             {
                 show, status,
+                showAccountLink = _state.SubscriberPage.Enabled && _state.SubscriberPage.ShowBannerLink,
                 userName = b.ShowUserName ? user.Username : null,
                 // No admin data, other-user balances, or transaction records are exposed.
                 plan = b.ShowPlan && enrolled ? plan?.Name : null,

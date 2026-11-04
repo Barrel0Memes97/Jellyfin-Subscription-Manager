@@ -49,12 +49,12 @@ with sync_playwright() as pw:
         page.locator(PANEL).wait_for(timeout=3000)
         check(page.locator(PANEL).count() == 1, 'Banner mounts once on initial Home route')
         check('Welcome, Alice!' in page.locator(PANEL).inner_text(), 'Correct user name is shown')
-        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip("#"),
-              'Top prepends to the same .homePageMain as the original injected script')
-        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip('#'),
-              'Top banner is directly above the Media Bar')
-        check(page.evaluate('''() => document.getElementById('jf-app-header').compareDocumentPosition(document.getElementById('jf-personalized-user-banner')) & Node.DOCUMENT_POSITION_FOLLOWING''') != 0,
-              'Jellyfin top menu stays above the banner')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == 'jf-subscription-banner-slot',
+              'Top slot is first in the original .homePageMain container')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == 'jf-subscription-banner-slot',
+              'The stable Top slot is placed above Media Bar')
+        check(page.locator(PANEL).evaluate('el => el.parentElement === document.body && el.classList.contains("jf-home-portal")'),
+              'Visible Top banner lives outside the React-managed Home subtree')
 
         # Reproduce the v0.2.4.5 failure: the parent of #homeTab allows
         # only the active tab as a visible child after initialization. A
@@ -115,8 +115,8 @@ with sync_playwright() as pw:
           document.dispatchEvent(new Event('visibilitychange'));
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip("#"),
-              'Switching back to inline top prepends into .homePageMain')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == 'jf-subscription-banner-slot',
+              'Switching back to Top restores the Home slot')
 
         # Media Bar plugins may insert their hero after the subscription banner is loaded.
         page.evaluate('''() => {
@@ -127,8 +127,8 @@ with sync_playwright() as pw:
           document.querySelector('.homePageMain').append(bar);
         }''')
         page.wait_for_timeout(150)
-        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == PANEL.lstrip('#'),
-              'Late-added media bar stays below banner after observer prepends it')
+        check(page.evaluate('''() => document.querySelector('.homePageMain').firstElementChild.id''') == 'jf-subscription-banner-slot',
+              'Late-added Media Bar follows the reserved slot')
 
         # Reproduce the Top-only regression: Media Bar replaces its internal
         # wrapper many times. The banner must remain outside the slideshow
@@ -177,7 +177,7 @@ with sync_playwright() as pw:
             '<div id="slides-container">New Media Bar</div><div class="homeSectionsContainer"><div>New movie rows</div></div>';
         }''')
         page.wait_for_timeout(150)
-        check(page.locator(PANEL).count() == 1, 'Banner remounts after nested React page rebuild')
+        check(page.locator(PANEL).count() == 1 and page.locator(PANEL).is_visible(), 'Visible Top banner survives nested React page rebuild without remounting')
         check(page.evaluate('bannerRequests') == requests_before_remount, 'DOM repairs do not cause extra API requests')
 
         # Removal of all home structure and later mount on the same route.
@@ -189,7 +189,30 @@ with sync_playwright() as pw:
           document.querySelector('#indexPage').append(tab);
         }''')
         page.wait_for_timeout(150)
-        check(page.locator(PANEL).count() == 1, 'Banner survives replacement of the entire Home tab')
+        check(page.locator(PANEL).count() == 1 and page.locator(PANEL).is_visible(), 'Body-mounted Top banner survives replacement of entire Home tab')
+
+        # Trailer playback may replace the ENTIRE Home subtree, not just
+        # the slides wrapper. A real Top banner must never be disconnected.
+        page.evaluate('''() => {
+          window.disconnectedDuringTrailer = false;
+          const banner=document.getElementById('jf-personalized-user-banner');
+          window.trailerWatcher = new MutationObserver(() => {
+            if (!banner.isConnected) window.disconnectedDuringTrailer = true;
+          });
+          window.trailerWatcher.observe(document.body,{childList:true,subtree:true});
+          window.trailerRebuilds=0;
+          window.trailerLoop=setInterval(()=>{
+            const tab=document.querySelector('#homeTab');
+            const home=tab.querySelector('.homePageMain');
+            home.innerHTML='<div id="slides-container"><video autoplay muted></video></div><div class="homeSectionsContainer">Trailer rows</div>';
+            window.trailerRebuilds++;
+          },35);
+        }''')
+        page.wait_for_timeout(500)
+        page.evaluate('''() => {clearInterval(window.trailerLoop);window.trailerWatcher.disconnect();}''')
+        check(page.evaluate('trailerRebuilds') >= 8, 'Movie trailer simulator rebuilds entire Home content repeatedly')
+        check(page.evaluate('!disconnectedDuringTrailer && !!document.querySelector("#jf-personalized-user-banner.jf-home-portal")'),
+              'Top banner never disconnects during full trailer content replacement')
 
         # Jellyfin 12 may retain a hidden duplicate #indexPage *before* the
         # actually visible instance. The banner must never be moved to it.

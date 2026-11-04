@@ -33,7 +33,7 @@ class Element {
 function createPage() {
   const elements = new Map();
   const page = new Element('subscriptionManagerPage');
-  const tabs = ['users', 'plans', 'payments', 'transactions', 'banner', 'settings'].map(name => {
+  const tabs = ['users', 'plans', 'payments', 'transactions', 'banner', 'subscriber', 'settings'].map(name => {
     const el = new Element('tab-' + name);
     el.dataset.tab = name;
     return el;
@@ -69,6 +69,12 @@ const state = {
   // A real server may serialize concrete Plan objects with capitalized keys.
   plans: [{Id:planId, Name:'Basic', MonthlyCents:450, Enabled:true, Description:'Standard access',
     JellyfinPermissions:{EnableContentDownloading:false}, SeerrRequestAccess:'deny'}],
+  subscriberPage: {Enabled:true, Title:'Member Center', Subtitle:'Account portal',
+    WelcomeMessage:'Thanks for your support', SupportMessage:'Contact the owner',
+    AccentColor:'#1199aa', CardColor:'#222630', ShowBalance:true, ShowPlan:true,
+    ShowPaidThrough:true, ShowRenewal:true, ShowPlanDetails:true, AllowPlanRequests:true,
+    AllowBannerCustomization:true, ShowTransactions:true, ShowLauncher:true, ShowBannerLink:true,
+    MenuName:'My Subscription', MenuIcon:'credit_card'},
   ledger: [], activeCount:0, enrolledCount:0,
   totalCollectedCents:0, totalBalanceCents:0, timeZoneId:'America/Los_Angeles', banner:null,
   seerr:{enabled:true, url:'http://seerr:5055', hasApiKey:true, autoImportUsers:false, status:'Connected'}
@@ -97,6 +103,17 @@ assert.match(get('#sm-plans').innerHTML, /Yes/);
 assert.doesNotMatch(get('#sm-plans').innerHTML, /Hidden/);
 assert.match(get('#sm-users').innerHTML, /Basic/);
 assert.match(get('#sm-users').innerHTML, /\$4\.50/);
+assert.equal(get('#sm-sp-title').value,'Member Center');
+assert.match(get('#sm-sp-preview').innerHTML,/Member Center/);
+const menu=JSON.parse(get('#sm-sp-menu-json').value);
+assert.equal(menu[0].url,'#/home?smAccount=1');
+assert.equal(menu[0].sideMenu,true);
+get('#sm-sp-title').value='Welcome, friends';
+get('#sm-sp-transactions').checked=false;
+await get('#sm-subscriber-form').fire('submit',{preventDefault(){}});
+const savedPortal=calls.filter(c=>c.url.endsWith('/subscriber-page')).at(-1);
+assert.equal(JSON.parse(savedPortal.data).page.title,'Welcome, friends');
+assert.equal(JSON.parse(savedPortal.data).page.showTransactions,false);
 assert.equal(get('#sm-seerr-key').value, '', 'API secret must never be inserted into UI');
 assert.match(get('#sm-plans').innerHTML, /Set default/, 'plan table lacks a one-click default action');
 assert.match(get('#sm-default-plan-current').textContent, /No default plan selected/, 'default-plan summary missing');
@@ -107,7 +124,7 @@ const quickDefault = calls.filter(c => c.url.endsWith('/plans/default')).at(-1);
 assert.equal(JSON.parse(quickDefault.data).planId, planId);
 
 
-// All six tabs must respond without making a network request.
+// All seven tabs must respond without making a network request.
 for (let i = 0; i < tabs.length; i++) {
   await page.fire('click', { target: {closest: () => tabs[i]} });
   panels.forEach((panel, j) => assert.equal(panel.hidden, i !== j, `tab ${i} did not select the right panel`));

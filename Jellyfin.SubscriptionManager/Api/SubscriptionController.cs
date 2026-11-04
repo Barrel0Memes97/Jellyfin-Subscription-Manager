@@ -188,7 +188,7 @@ public sealed class SubscriptionController : ControllerBase
     {
         var userId = AuthenticatedUserId();
         if (!userId.HasValue) return Unauthorized();
-        try { await _service.SetUserBannerAsync(userId.Value, request); return Ok(new { success = true }); }
+        try { await _service.SetSubscriberBannerAsync(userId.Value, request); return Ok(new { success = true }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
@@ -231,6 +231,14 @@ public sealed class SubscriptionController : ControllerBase
         if (!Guid.TryParse(claim, out var id) || id == Guid.Empty) return Unauthorized();
         try { return Ok(await _service.GetBannerForUserAsync(id, ct)); }
         catch (ArgumentException) { return NotFound(); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("subscriber-page")]
+    public async Task<IActionResult> SaveSubscriberPage([FromBody] SubscriberPageRequest request)
+    {
+        try { await _service.SetSubscriberPageAsync(request.Page); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [Authorize(Policy = Policies.RequiresElevation)]

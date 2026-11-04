@@ -13,7 +13,7 @@ PROJECT = (ROOT / 'Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csp
 
 class BannerLifecycleTests(unittest.TestCase):
     def test_version_and_automatic_cache_busting(self):
-        self.assertIn('<Version>0.2.5.0</Version>', PROJECT)
+        self.assertIn('<Version>0.2.6.0</Version>', PROJECT)
         self.assertIn('Assembly.GetName().Version', MIDDLEWARE)
         self.assertIn('banner.js?v={version}', MIDDLEWARE)
 
@@ -28,8 +28,8 @@ class BannerLifecycleTests(unittest.TestCase):
     def test_find_current_home_and_preserve_single_element(self):
         self.assertIn("document.querySelectorAll('#homeTab')", BANNER)
         self.assertIn('homeSectionsContainer', BANNER)
-        self.assertIn('bannerElement.parentElement !== target', BANNER)
-        self.assertIn('target.prepend(bannerElement)', BANNER)
+        self.assertIn('bannerSlot.parentElement !== target', BANNER)
+        self.assertIn('target.prepend(bannerSlot)', BANNER)
         self.assertIn('if (!bannerElement) {', BANNER)
         self.assertNotIn('document.getElementById(bannerId)?.remove()', BANNER)
 

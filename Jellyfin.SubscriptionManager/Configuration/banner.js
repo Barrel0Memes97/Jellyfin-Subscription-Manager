@@ -14,6 +14,10 @@
   const bannerId = 'jf-personalized-user-banner';
   const styleId = 'jf-subscription-banner-style';
   let bannerElement = null;
+  let bannerSlot = null; // Space reservation in Jellyfin's React Home tree.
+  // The actual Top banner is ALWAYS mounted to document.body, never a Media Bar
+  // or React-managed container. Trailer playback can replace those containers.
+
   let lastRefresh = 0;
   let dismissedUntil = 0;
   let refreshMs = 5 * 60000;
@@ -104,8 +108,33 @@
   }
 
   function remove() {
-    // Detached elements may not be found by getElementById; keep one instance.
+    // Hide the visible element and remove its layout reservation together.
     bannerElement?.remove();
+    bannerSlot?.remove();
+  }
+
+  function updatePortalPosition(target) {
+    if (!bannerElement || !target || !visiblyPresent(target)) return;
+    if (!bannerSlot) {
+      bannerSlot = document.createElement('div');
+      bannerSlot.id = 'jf-subscription-banner-slot';
+      bannerSlot.setAttribute('aria-hidden', 'true');
+    }
+    // The slot may be destroyed by a React commit. Recreate its placement;
+    // critically, this NEVER disconnects the actual banner.
+    if (bannerSlot.parentElement !== target || target.firstElementChild !== bannerSlot)
+      target.prepend(bannerSlot);
+    if (bannerElement.parentElement !== document.body)
+      document.body.appendChild(bannerElement);
+    const targetBounds = target.getBoundingClientRect();
+    const width = Math.min(800, Math.max(100, targetBounds.width - 32));
+    bannerElement.style.width = width + 'px';
+    bannerElement.style.left = (targetBounds.left + targetBounds.width / 2) + 'px';
+    bannerElement.style.transform = 'translateX(-50%)';
+    bannerSlot.style.height = Math.ceil(bannerElement.getBoundingClientRect().height + 20) + 'px';
+    const slotBounds = bannerSlot.getBoundingClientRect();
+    bannerElement.style.top = (slotBounds.top + 12) + 'px';
+    bannerElement.style.bottom = '';
   }
 
   function installCss() {
@@ -135,6 +164,9 @@
         color:#fff;font-size:20px;line-height:26px;cursor:pointer;
         transition:transform .15s ease,background-color .15s ease;}
       #${bannerId} .jf-banner-close:hover {background:#ffffff55;transform:scale(1.08);}
+      #${bannerId}.jf-home-portal {position:fixed;z-index:900;margin:0;max-width:800px;}
+      #jf-subscription-banner-slot {position:relative;display:block;box-sizing:border-box;
+        width:100%;min-height:0;pointer-events:none;flex-shrink:0;}
       #${bannerId}.jf-floating {position:fixed;left:50%;transform:translateX(-50%);
         width:min(800px,calc(100vw - 32px));margin:0;z-index:9999;}
       #${bannerId}.jf-floating[data-position="top"] {top:max(72px,env(safe-area-inset-top));}
@@ -150,6 +182,7 @@
     if (!data?.show || isLogin() || Date.now() < dismissedUntil || !bannerElement) { remove(); return; }
     const floating = field(data.appearance || {}, 'layout') === 'floating';
     if (floating) {
+      bannerSlot?.remove();
       if (bannerElement.parentElement !== document.body) document.body.appendChild(bannerElement);
       return;
     }
@@ -159,23 +192,20 @@
     // rather than removing it just because the tab momentarily went missing.
     const bottom = field(data.appearance || {}, 'position') === 'bottom';
     if (bottom) {
-      // Bottom intentionally follows every home section, not just the hero.
+      // Bottom retains its previously working inline placement.
+      bannerSlot?.remove();
       const target = homeNode();
       if (!target) return;
-      if (bannerElement.parentElement !== target || target.lastElementChild !== bannerElement) {
+      if (bannerElement.parentElement !== target || target.lastElementChild !== bannerElement)
         target.appendChild(bannerElement);
-      }
       return;
     }
-    // The original injected banner used findHomeContainer() + prepend().
-    // Keep the element inside the actual Home content area and before Media
-    // Bar rather than outside the active tab in a sibling React wrapper.
+    // Original selection order chooses the stable, visible Home anchor.
+    // The slot reserves exactly that position. The banner lives outside the
+    // React and Media Bar subtrees, so trailers cannot unmount it.
     const target = findHomeContainer();
-    if (!target) return; // Do not remove on a transient Home render gap.
-    if (bannerElement.parentElement !== target || target.firstElementChild !== bannerElement) {
-      target.prepend(bannerElement);
-      console.debug('[Subscription Manager] Banner mounted at top in', target);
-    }
+    if (!target) return; // Preserve the visible banner through temporary redraws.
+    updatePortalPosition(target);
   }
 
   function queueMount() {
@@ -216,7 +246,7 @@
       bannerElement.setAttribute('aria-live','polite');
     }
     const banner = bannerElement;
-    banner.className = floating ? 'jf-floating' : '';
+    banner.className = floating ? 'jf-floating' : (field(a,'position') === 'bottom' ? '' : 'jf-home-portal');
     banner.dataset.position = field(a,'position') === 'bottom' ? 'bottom' : 'top';
     // Clear the other edge explicitly so updates never inherit stale placement.
     banner.style.top = floating && banner.dataset.position === 'top'
@@ -224,7 +254,7 @@
     banner.style.bottom = floating && banner.dataset.position === 'bottom'
       ? 'max(16px, env(safe-area-inset-bottom))' : '';
     banner.style.opacity = '1';
-    banner.style.transform = floating ? 'translateX(-50%)' : 'none';
+    banner.style.transform = floating ? 'translateX(-50%)' : (banner.classList.contains('jf-home-portal') ? 'translateX(-50%)' : 'none');
     banner.style.background = field(a,'gradient') !== false
       ? `linear-gradient(110deg,${color},rgba(25,25,30,.95))` : color;
     banner.style.boxShadow = `0 6px 24px #0007, 0 2px 16px ${color}44`;
@@ -257,7 +287,7 @@
       event.preventDefault(); event.stopPropagation();
       window.__subscriptionManagerOpenAccount?.();
     });
-    info.appendChild(accountLink);
+    if (data.showAccountLink !== false) info.appendChild(accountLink);
     content.appendChild(info); banner.appendChild(content);
     refreshMs = Math.max(1, Math.min(120, Number(field(a, 'refreshMinutes')) || 5)) * 60000;
     if (field(a, 'dismissible') !== false) {
@@ -302,12 +332,19 @@
   // In the browser console: window.__subscriptionManagerBannerDebug()
   window.__subscriptionManagerBannerDebug = () => {
     const target = findHomeContainer();
+    const rect = bannerElement?.isConnected ? bannerElement.getBoundingClientRect() : null;
+    const center = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 24)) : null;
     return {
       route: location.hash,
+      bannerCoveredBy: center && center !== bannerElement && !bannerElement?.contains(center)
+        ? (center.id || center.className || center.tagName) : null,
       requestedPosition: field(lastData?.appearance || {}, 'position') || 'top',
       bannerConnected: Boolean(bannerElement?.isConnected),
       bannerVisible: visiblyPresent(bannerElement),
-      bannerParent: bannerElement?.parentElement?.className || null,
+      bannerParent: bannerElement?.parentElement?.tagName || null,
+      homeSlotConnected: Boolean(bannerSlot?.isConnected),
+      homeSlotParent: bannerSlot?.parentElement?.className || null,
+      outsideMediaBar: !Boolean(bannerElement?.closest?.('#slides-container, .media-bar-react-wrapper')),
       homeContainer: target?.className || null,
       homeContainerVisible: visiblyPresent(target),
       dismissed: Date.now() < dismissedUntil,
@@ -338,6 +375,10 @@
     window.addEventListener('hashchange', onNavigation);
     window.addEventListener('popstate', onNavigation);
     window.addEventListener('pageshow', onNavigation);
+    window.addEventListener('resize', queueMount);
+    // Jellyfin uses nested scroll containers: capture all scrolls to keep the
+    // fixed portal visually aligned with the slot in its home content.
+    document.addEventListener('scroll', queueMount, true);
     document.addEventListener('viewshow', onNavigation);
     document.addEventListener('HISTORY_UPDATE', onNavigation);
     document.addEventListener('visibilitychange', () => {
@@ -345,7 +386,7 @@
     });
     // Lightweight fallback for tab class changes that don't mutate child lists.
     // This only checks placement; the network refresh follows the saved cadence.
-    window.setInterval(() => { ensureMounted(); refresh(); }, 5000);
+    window.setInterval(() => { ensureMounted(); refresh(); }, 1000);
     refresh(true);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start,{once:true});

@@ -68,6 +68,29 @@ with sync_playwright() as pw:
         page.locator('#sma-banner-form button[type=submit]').click()
         page.wait_for_timeout(180)
         check(page.evaluate("window.accountRecord.banner.color") == '#aabbcc', 'Personalized banner can be saved')
+        # Admin page customization is supplied by the current-user API only.
+        page.evaluate('''() => {
+          window.accountRecord.page={enabled:true,title:'Member Center',subtitle:'Welcome to your account',
+            welcomeMessage:'Thanks for supporting us!',supportMessage:'Contact the server owner to pay.',
+            accentColor:'#aabbcc',cardColor:'#334455',showBalance:false,showPlan:true,
+            showPaidThrough:false,showRenewal:true,showPlanDetails:false,
+            allowPlanRequests:false,allowBannerCustomization:false,showTransactions:false,
+            showLauncher:true,showBannerLink:true};
+        }''')
+        page.locator('#sma-reload').click()
+        page.wait_for_timeout(180)
+        check(page.locator('#sma-page-title').inner_text()=='Member Center', 'Custom admin-set page title appears')
+        check('Thanks for supporting us!' in page.locator('#jf-subscription-account-page').inner_text(), 'Custom welcome message is visible')
+        check(page.locator('#sma-plan-form').count() == 0, 'Disabled plan change section is absent')
+        check(page.locator('#sma-banner-form').count() == 0, 'Disabled banner editor is absent')
+        check(page.locator('.sma-table').count() == 0, 'Hidden transactions are absent')
+        check('$9.50' not in page.locator('#jf-subscription-account-page').inner_text(), 'Credit is hidden when administrator chooses')
+        page.locator('#sma-close').click()
+        page.evaluate("() => { location.hash='/home?smAccount=1'; dispatchEvent(new Event('hashchange')); }")
+        page.locator('#jf-subscription-account-page').wait_for(timeout=3000)
+        check(page.locator('#sma-page-title').inner_text()=='Member Center', 'KefinTweaks Home deep link opens customized portal')
+        page.locator('#sma-close').click()
+        check(page.evaluate("location.hash") == '#/home', 'Closing deep link returns to valid Jellyfin Home route')
         requests = page.evaluate('window.accountCalls')
         check(all('/account/' in req['url'] for req in requests), 'Subscriber page uses only scoped account endpoints')
         check(not any('/users/' in req['url'] or '/payments' in req['url'] or '/overview' in req['url'] for req in requests), 'No administrator-only API calls are made')
