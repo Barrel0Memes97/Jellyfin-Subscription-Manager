@@ -13,7 +13,7 @@ PROJECT = (ROOT / 'Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csp
 
 class BannerLifecycleTests(unittest.TestCase):
     def test_version_and_automatic_cache_busting(self):
-        self.assertIn('<Version>0.2.4.7</Version>', PROJECT)
+        self.assertIn('<Version>0.2.5.0</Version>', PROJECT)
         self.assertIn('Assembly.GetName().Version', MIDDLEWARE)
         self.assertIn('banner.js?v={version}', MIDDLEWARE)
 

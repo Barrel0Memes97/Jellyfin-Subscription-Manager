@@ -38,7 +38,8 @@ export default function SubscriptionManagerController(page) {
       });
       const users = (field(raw, 'users') || []).map(u => ({ ...u,
         userId:guid(field(u, 'userId')), name:field(u, 'name') ?? '',
-        planId:guid(field(u, 'planId')), included:bool(field(u, 'included')),
+        planId:guid(field(u, 'planId')), pendingPlanId:guid(field(u, 'pendingPlanId')),
+        pendingPlanRequestedUtc:field(u, 'pendingPlanRequestedUtc') ?? null, included:bool(field(u, 'included')),
         administrator:bool(field(u, 'administrator')), disabled:bool(field(u, 'disabled')),
         balanceCents:Number(field(u, 'balanceCents') ?? 0),
         paidThrough:field(u, 'paidThrough') ?? null, nextChargeOn:field(u, 'nextChargeOn') ?? null,
@@ -117,6 +118,17 @@ export default function SubscriptionManagerController(page) {
         <td>${escapeHtml(u.included ? (u.nextChargeOn || 'Not scheduled') : '—')}</td>
         <td>${u.administrator ? '—' : `<button class="sm-button alt" type="button" data-details="${u.userId}">Configure</button>`}</td>
       </tr>`).join('');
+      const pendingRequests = state.users.filter(u => u.pendingPlanId && !u.administrator);
+      $('#sm-plan-requests').innerHTML = pendingRequests.map(u => {
+        const requested = planById(u.pendingPlanId);
+        const current = planById(u.planId);
+        return `<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(current?.name || '—')}</td>
+          <td>${escapeHtml(requested?.name || 'Plan removed')} ${requested ? `(${usd(requested.monthlyCents)}/mo)` : ''}</td>
+          <td>${escapeHtml((u.pendingPlanRequestedUtc || '').replace('T',' ').slice(0,16) || '—')} UTC</td>
+          <td><div class="sm-inline"><button class="sm-button" type="button" data-plan-review="approve" data-review-user="${u.userId}"
+            ${requested?.enabled ? '' : 'disabled'}>Approve</button>
+            <button class="sm-button alt" type="button" data-plan-review="reject" data-review-user="${u.userId}">Decline</button></div></td></tr>`;
+      }).join('') || '<tr><td colspan="5">No pending plan-change requests.</td></tr>';
       // The default is persisted separately; editing a plan must not overwrite it.
       const defaultPlan = planById(state.defaultPlanId);
       $('#sm-users-default-plan').textContent = defaultPlan
@@ -370,6 +382,18 @@ export default function SubscriptionManagerController(page) {
       if (target.dataset.tab) return showTab(target.dataset.tab);
       if (target.dataset.details) return showDetails(target.dataset.details);
       if (target.id === 'sm-close-detail') { selectedUser = null; $('#sm-detail').hidden = true; return; }
+      if (target.dataset.planReview && target.dataset.reviewUser) {
+        const u = userById(target.dataset.reviewUser);
+        if (!u || !u.pendingPlanId) return;
+        const approve = target.dataset.planReview === 'approve';
+        const plan = planById(u.pendingPlanId);
+        if (!confirm(`${approve ? 'Approve' : 'Decline'} ${u.name}'s request for ${plan?.name || 'the requested plan'}?` +
+          (approve ? ' New access permissions apply now; the new price applies at the next billing charge.' : ''))) return;
+        try { await invoke('account/requests/' + u.userId + '/review', {approve},
+          approve ? 'Plan request approved and access re-synchronized.' : 'Plan request declined.'); }
+        catch (_) { }
+        return;
+      }
       if (target.dataset.defaultPlan) {
         const plan = planById(target.dataset.defaultPlan);
         if (!plan || !plan.enabled || plan.id === state.defaultPlanId) return;

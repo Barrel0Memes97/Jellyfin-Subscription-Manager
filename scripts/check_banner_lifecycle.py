@@ -32,7 +32,7 @@ with sync_playwright() as pw:
         page.evaluate('''() => {
           location.hash = '/home';
           Object.defineProperty(document, 'currentScript', {
-             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.4.7'})
+             configurable: true, get: () => ({src: 'https://jellyfin.example/SubscriptionManager/banner.js?v=0.2.5.0'})
           });
           window.bannerRequests = 0;
           window.userId = 'alice';

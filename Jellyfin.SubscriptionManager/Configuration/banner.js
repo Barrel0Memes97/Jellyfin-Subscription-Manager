@@ -126,6 +126,10 @@
       #${bannerId} .jf-banner-message { font-size:13px;opacity:.87;margin-top:3px; }
       #${bannerId} .jf-banner-extra { font-size:12px;opacity:.87;margin-top:4px;
         display:flex;flex-wrap:wrap;gap:4px 14px; }
+      #${bannerId} .jf-banner-account-link {border:0;border-bottom:1px solid currentColor;
+        background:none;color:inherit;font:inherit;font-size:12px;cursor:pointer;padding:3px 0;
+        opacity:.9;margin-top:5px;}
+      #${bannerId} .jf-banner-account-link:hover {opacity:1;}
       #${bannerId} .jf-banner-close {position:absolute;right:10px;top:10px;
         border:0;border-radius:50%;width:28px;height:28px;background:#ffffff30;
         color:#fff;font-size:20px;line-height:26px;cursor:pointer;
@@ -245,6 +249,15 @@
       for (const part of extras) { const span = document.createElement('span'); span.textContent = part; detail.appendChild(span); }
       info.appendChild(detail);
     }
+    const accountLink = document.createElement('button');
+    accountLink.type = 'button'; accountLink.className = 'jf-banner-account-link';
+    accountLink.textContent = 'My Subscription';
+    accountLink.setAttribute('aria-label', 'Open your subscription account');
+    accountLink.addEventListener('click', event => {
+      event.preventDefault(); event.stopPropagation();
+      window.__subscriptionManagerOpenAccount?.();
+    });
+    info.appendChild(accountLink);
     content.appendChild(info); banner.appendChild(content);
     refreshMs = Math.max(1, Math.min(120, Number(field(a, 'refreshMinutes')) || 5)) * 60000;
     if (field(a, 'dismissible') !== false) {

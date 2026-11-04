@@ -21,6 +21,11 @@ jobs:
           node-version: '22'
       - name: Verify .NET SDK
         run: dotnet --info
+      - name: Check client scripts
+        run: |
+          node --check Jellyfin.SubscriptionManager/Configuration/banner.js
+          node --check Jellyfin.SubscriptionManager/Configuration/account.js
+          node --check Jellyfin.SubscriptionManager/Configuration/SubscriptionManager.js
       - name: Restore
         run: dotnet restore Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csproj
       - name: Compile plugin

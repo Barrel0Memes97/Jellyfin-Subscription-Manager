@@ -275,6 +275,22 @@ get('#sm-b-layout').value = 'floating';
 await get('#sm-banner-form').fire('input', {});
 assert.match(get('#sm-b-preview-placement').textContent, /bottom of the screen/);
 
+// A subscriber plan request is visible in Users and can only be approved/declined
+// by the administrator API. The browser does not silently change the plan.
+state.plans.push({Id:'44444444-4444-4444-4444-444444444444',Name:'Premium',MonthlyCents:900,Enabled:true});
+state.users[0].pendingPlanId='44444444-4444-4444-4444-444444444444';
+state.users[0].pendingPlanRequestedUtc='2026-11-03T12:00:00Z';
+await page.fire('viewshow');
+await new Promise(resolve => setImmediate(resolve));
+assert.match(get('#sm-plan-requests').innerHTML, /Premium/);
+assert.match(get('#sm-plan-requests').innerHTML, /Approve/);
+await page.fire('click', {target:{closest:()=>({dataset:{planReview:'approve',reviewUser:id},id:'approve'})}});
+const reviewed = calls.filter(c=>c.url.endsWith('/account/requests/' + id + '/review')).at(-1);
+assert.equal(JSON.parse(reviewed.data).approve,true);
+await page.fire('click', {target:{closest:()=>({dataset:{planReview:'reject',reviewUser:id},id:'decline'})}});
+const rejected = calls.filter(c=>c.url.endsWith('/account/requests/' + id + '/review')).at(-1);
+assert.equal(JSON.parse(rejected.data).approve,false);
+
 // Repeated controller setup on the same DOM node should not multiply callbacks.
 const before = page.listeners.click.length;
 new Controller(page);

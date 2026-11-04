@@ -153,6 +153,63 @@ public sealed class SubscriptionController : ControllerBase
         return Ok(new { message = _service.SeerrStatusMessage });
     }
 
+    // Subscriber-facing endpoints: identity always comes from an authenticated
+    // Jellyfin claim, never a user ID submitted by the browser.
+    private Guid? AuthenticatedUserId()
+    {
+        var claim = User.FindFirst("Jellyfin-UserId")?.Value;
+        return Guid.TryParse(claim, out var id) && id != Guid.Empty ? id : null;
+    }
+
+    [Authorize]
+    [HttpGet("account/me")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> Account(CancellationToken ct)
+    {
+        var userId = AuthenticatedUserId();
+        if (!userId.HasValue) return Unauthorized();
+        try { return Ok(await _service.GetAccountAsync(userId.Value, ct)); }
+        catch (ArgumentException) { return NotFound(); }
+    }
+
+    [Authorize]
+    [HttpPost("account/plan-request")]
+    public async Task<IActionResult> RequestPlanChange([FromBody] AccountPlanRequest request)
+    {
+        var userId = AuthenticatedUserId();
+        if (!userId.HasValue) return Unauthorized();
+        try { await _service.RequestPlanChangeAsync(userId.Value, request); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize]
+    [HttpPost("account/banner")]
+    public async Task<IActionResult> UpdateMyBanner([FromBody] UserBannerRequest request)
+    {
+        var userId = AuthenticatedUserId();
+        if (!userId.HasValue) return Unauthorized();
+        try { await _service.SetUserBannerAsync(userId.Value, request); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [Authorize(Policy = Policies.RequiresElevation)]
+    [HttpPost("account/requests/{userId:guid}/review")]
+    public async Task<IActionResult> ReviewPlanChange(Guid userId, [FromBody] AccountPlanReviewRequest request)
+    {
+        try { await _service.ReviewPlanChangeAsync(userId, request); return Ok(new { success = true }); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [AllowAnonymous]
+    [HttpGet("account.js")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public IActionResult AccountScript()
+    {
+        var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(
+            "Jellyfin.Plugin.SubscriptionManager.Configuration.account.js");
+        return stream is null ? NotFound() : File(stream, "text/javascript; charset=utf-8");
+    }
+
     [AllowAnonymous]
     [HttpGet("banner.js")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]

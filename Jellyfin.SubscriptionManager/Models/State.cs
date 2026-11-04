@@ -58,6 +58,9 @@ public sealed class Membership
     public Guid UserId { get; set; }
     public bool Included { get; set; }
     public Guid? PlanId { get; set; }
+    // A subscriber may request a different plan, but only an administrator may approve it.
+    public Guid? PendingPlanId { get; set; }
+    public DateTime? PendingPlanRequestedUtc { get; set; }
     public long BalanceCents { get; set; }
     public DateOnly? PaidThrough { get; set; }
     public DateOnly? NextChargeOn { get; set; }
@@ -172,3 +175,6 @@ public sealed class BannerSettings
 }
 
 public sealed record BannerRequest(BannerSettings Banner);
+
+public sealed record AccountPlanRequest(Guid PlanId);
+public sealed record AccountPlanReviewRequest(bool Approve);

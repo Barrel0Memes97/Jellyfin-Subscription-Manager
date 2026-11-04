@@ -365,6 +365,7 @@ public sealed partial class SubscriptionService
                     {
                         userId = u.Id, name = u.Username, administrator = admin, disabled,
                         included = m?.Included ?? false, planId = m?.PlanId,
+                        pendingPlanId = m?.PendingPlanId, pendingPlanRequestedUtc = m?.PendingPlanRequestedUtc,
                         balanceCents = m?.BalanceCents ?? 0L, paidThrough = m?.PaidThrough,
                         nextChargeOn = m?.NextChargeOn ?? (m is { BillingCycle: "firstFriday" or "lastFriday" }
                             ? (DateOnly?)NextScheduledFriday(m.PaidThrough?.AddDays(1) ?? today, m.BillingCycle) : null),
@@ -515,6 +516,9 @@ public sealed partial class SubscriptionService
             }
             // Assigning a plan must work even before a user is enrolled.
             m.PlanId = chosenPlanId;
+            // An administrator choosing a plan supersedes pending self-service requests.
+            m.PendingPlanId = null;
+            m.PendingPlanRequestedUtc = null;
             Save();
             await ReconcileLockedAsync(CancellationToken.None).ConfigureAwait(false);
         }

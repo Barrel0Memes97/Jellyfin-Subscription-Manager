@@ -50,6 +50,11 @@ jobs:
       - name: Run regression checks
         run: python3 -m unittest discover -s tests -v
 
+      - name: Check client scripts
+        run: |
+          node --check Jellyfin.SubscriptionManager/Configuration/banner.js
+          node --check Jellyfin.SubscriptionManager/Configuration/account.js
+          node --check Jellyfin.SubscriptionManager/Configuration/SubscriptionManager.js
       - name: Restore and publish
         run: |
           dotnet restore Jellyfin.SubscriptionManager/Jellyfin.SubscriptionManager.csproj

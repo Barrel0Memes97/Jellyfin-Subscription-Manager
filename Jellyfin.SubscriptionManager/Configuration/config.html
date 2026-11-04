@@ -80,6 +80,12 @@
     </nav>
     <section class="sm-panel" id="sm-panel-users">
       <div class="sm-toolbar"><h2>Jellyfin users</h2><div class="sm-inline"><button class="sm-button alt" type="button" id="sm-refresh">Refresh users &amp; billing</button><button class="sm-button alt" type="button" id="sm-sync-statuses">Manually update users' statuses</button></div></div>
+      <div class="sm-box" id="sm-plan-requests-box">
+        <h3>Subscriber plan-change requests</h3>
+        <p class="sm-hint">Subscribers can request a different plan from My Subscription. Only administrators can approve changes. Approval applies new plan permissions immediately; the new monthly price applies at the next billing charge, without prorating the current period.</p>
+        <div class="sm-scroll"><table><thead><tr><th>User</th><th>Current plan</th><th>Requested plan</th><th>Requested</th><th>Decision</th></tr></thead>
+        <tbody id="sm-plan-requests"><tr><td colspan="5">Loading requests...</td></tr></tbody></table></div>
+      </div>
       <div class="sm-inline"><strong id="sm-users-default-plan" aria-live="polite">Loading default plan...</strong><button type="button" class="sm-button alt" data-tab="plans">Change default plan</button></div>
       <p class="sm-hint">Everyone is discovered automatically. Choosing a plan enrolls a user automatically; clearing the plan disables management. Turning management on with no selected plan assigns the default from Plans. Turning it off retains their previous plan for later. Administrators cannot be enrolled. Configure opens that user's editor below the table.</p>
       <div class="sm-scroll sm-box"><table><thead><tr><th>User</th><th>Managed</th><th>Plan</th><th>Balance</th><th>Paid through</th><th>Status</th><th>Next renewal</th><th>Details</th></tr></thead><tbody id="sm-users"></tbody></table></div>
